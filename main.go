@@ -23,6 +23,8 @@ var albums = []album{
 
 func main() {
 	router := gin.Default()
+	gin.SetMode(gin.ReleaseMode)
+
 	router.GET("/albums", getAlbums)
 	router.GET("/albums/:id", getAlbumByID)
 	router.POST("/albums", postAlbums)
