@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	auth "github.com/AlvaroZev/KidStorePeru-Backend/auth"
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,9 +27,9 @@ func main() {
 	router := gin.Default()
 	gin.SetMode(gin.ReleaseMode)
 
+	router.POST("/login", auth.LoginHandler)
+	router.GET("/protected", auth.ProtectedHandler)
 	router.GET("/albums", getAlbums)
-	router.GET("/albums/:id", getAlbumByID)
-	router.POST("/albums", postAlbums)
 
 	//router.Run("localhost:8080")
 	router.GET("/", func(c *gin.Context) {
