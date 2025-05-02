@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -757,10 +758,13 @@ func HandlerGetFAccountState(db *sql.DB) gin.HandlerFunc {
 // ============================ MAIN ============================
 func main() {
 	// Load environment variables from .env file
-	if err := godotenv.Load(); err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
-	}
 
+	//first check if the file exists and then load it
+	if _, err := os.Stat(".env"); err == nil {
+		if err := godotenv.Load(); err != nil {
+			log.Fatalf("Error loading .env file: %v", err)
+		}
+	}
 	// Process environment variables into Config struct
 	var cfg envConfigType
 	if err := envconfig.Process("", &cfg); err != nil {
