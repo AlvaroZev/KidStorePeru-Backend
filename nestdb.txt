@@ -1,0 +1,52 @@
+-- Enable UUID extension (only needs to be run once per DB)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+
+-- Drop tables in reverse order of dependencies
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS game_accounts;
+DROP TABLE IF EXISTS users;
+
+-- Users Table
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username TEXT UNIQUE NOT NULL,
+    email TEXT,
+    password TEXT NOT NULL,  -- SHA/Bcrypt hash stored as text
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Game Accounts Table
+CREATE TABLE game_accounts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    username TEXT NOT NULL,
+    remaining_gifts INTEGER DEFAULT 0,
+    access_token TEXT NOT NULL,
+    owner_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+
+    -- Unique constraint to prevent the same username for same owner
+    CONSTRAINT unique_game_account_per_user UNIQUE (username, owner_user_id)
+);
+
+-- Transactions Table
+CREATE TABLE transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    game_account_id UUID REFERENCES game_accounts(id) ON DELETE CASCADE,
+    receiver_id TEXT,
+    receiver_username TEXT,
+    object_store_id TEXT NOT NULL,
+    object_store_name TEXT NOT NULL,
+    regular_price NUMERIC NOT NULL,
+    final_price NUMERIC NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Insert default user
+INSERT INTO users (username, password)
+VALUES (
+    '',-- admin username
+    '' -- admin password as bcrypt hash
+);
