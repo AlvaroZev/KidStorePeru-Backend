@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
@@ -789,6 +790,14 @@ func main() {
 	var list_ofPendingRequests []AccountsToConnect
 
 	router := gin.Default()
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	gin.SetMode(gin.ReleaseMode)
 
 	authorized := router.Group("/", AuthMiddleware())
