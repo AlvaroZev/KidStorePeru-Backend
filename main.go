@@ -790,9 +790,16 @@ func main() {
 	var list_ofPendingRequests []AccountsToConnect
 
 	router := gin.Default()
+
+	allowedOrigins := map[string]bool{
+		"http://localhost:5173":            true,
+		"https://your-production-site.com": true,
+	}
+
 	router.Use(cors.New(cors.Config{
-		// AllowOrigins:     []string{"http://localhost:5173"},
-		AllowOrigins:     []string{"*"},
+		AllowOriginFunc: func(origin string) bool {
+			return allowedOrigins[origin]
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Content-Type", "Accept"},
 		ExposeHeaders:    []string{"X-Total-Count"},
