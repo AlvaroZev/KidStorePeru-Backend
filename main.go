@@ -791,9 +791,11 @@ func main() {
 
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173"},
-		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+		// AllowOrigins:     []string{"http://localhost:5173"},
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Content-Type", "Accept"},
+		ExposeHeaders:    []string{"X-Total-Count"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -814,7 +816,7 @@ func main() {
 	//authorized.GET("/faccountstate", HandlerGetFAccountState(db))
 	//Falta: go routine para revisar periodicamente por solicitudes de amistad
 
-	router.POST("/loginForm", HandlerLoginForm(db, cfg.AdminUser))
+	router.POST("/loginform", HandlerLoginForm(db, cfg.AdminUser))
 
 	go UpdateTokensPeriodically(db, &list_ofPendingRequests)
 
