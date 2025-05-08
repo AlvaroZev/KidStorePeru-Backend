@@ -18,7 +18,6 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 type AccountsToConnect struct {
@@ -440,6 +439,7 @@ func HandlerLoginForm(db *sql.DB, adminUsername string) gin.HandlerFunc {
 				return
 			}
 		}
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid Password"})
 
 	}
 }
@@ -790,8 +790,12 @@ func main() {
 	var list_ofPendingRequests []AccountsToConnect
 
 	router := gin.Default()
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery())
+	router.Use(genericMiddleware)
 
 	allowedOrigins := map[string]bool{
+		"*":                                true,
 		"http://localhost:5173":            true,
 		"https://your-production-site.com": true,
 	}
@@ -803,6 +807,7 @@ func main() {
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Content-Type", "Accept"},
 		ExposeHeaders:    []string{"X-Total-Count"},
+		AllowWildcard:    true,
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -828,4 +833,15 @@ func main() {
 	go UpdateTokensPeriodically(db, &list_ofPendingRequests)
 
 	router.Run(":8080")
+}
+
+func genericMiddleware(c *gin.Context) {
+	// Middleware logic here
+	//Options for preflight requests
+	if c.Request.Method == "OPTIONS" {
+		c.JSON(http.StatusOK, nil)
+		c.Abort()
+		return
+	}
+	c.Next()
 }
