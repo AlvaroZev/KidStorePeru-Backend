@@ -23,7 +23,10 @@ CREATE TABLE game_accounts (
     username TEXT NOT NULL,
     remaining_gifts INTEGER DEFAULT 0,
     access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL
     owner_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    game_account_id TEXT NOT NULL
+    authorization_code TEXT NOT NULL
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
 
