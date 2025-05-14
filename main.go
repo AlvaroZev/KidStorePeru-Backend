@@ -6,10 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"slices"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -31,14 +35,16 @@ type Login struct {
 }
 
 type envConfigType struct {
-	Host      string `envconfig:"DB_HOST" default:"postgres.railway.internal"`
-	Port      int    `envconfig:"DB_PORT" default:"5432"`
-	User      string `envconfig:"DB_USER"`
-	Password  string `envconfig:"DB_PASSWORD"`
-	DBName    string `envconfig:"DB_NAME"`
-	SecretKey string `envconfig:"SECRET_KEY"`
-	AdminUser string `envconfig:"ADMIN_USER"`
-	AdminPass string `envconfig:"ADMIN_PASS"`
+	Host                   string `envconfig:"DB_HOST" default:"postgres.railway.internal"`
+	Port                   int    `envconfig:"DB_PORT" default:"5432"`
+	User                   string `envconfig:"DB_USER"`
+	Password               string `envconfig:"DB_PASSWORD"`
+	DBName                 string `envconfig:"DB_NAME"`
+	SecretKey              string `envconfig:"SECRET_KEY"`
+	AdminUser              string `envconfig:"ADMIN_USER"`
+	AdminPass              string `envconfig:"ADMIN_PASS"`
+	AcceptFriendsInMinutes int    `envconfig:"ACCEPT_FRIENDS_IN_MINUTES" default:"5"`
+	RefreshTokensInMinutes int    `envconfig:"REFRESH_TOKENS_IN_MINUTES" default:"13"`
 }
 
 type AccessTokenResult struct {
@@ -49,15 +55,19 @@ type deviceResultResponse struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
 	VerificationUriComplete string `json:"verification_uri_complete"`
+	Expires_in              int    `json:"expires_in"`
 }
 
-type loginResultResponse struct {
-	AccessToken    string `json:"access_token"`
-	RefreshToken   string `json:"refresh_token"`
-	AccountId      string `json:"account_id"`
-	DisplayName    string `json:"displayName"`
-	ExpiresIn      int    `json:"expires_in"`
-	RefreshExpires int    `json:"refresh_expires"`
+type LoginResultResponse struct {
+	AccessToken                string `json:"access_token"`
+	AccessTokenExpiration      int    `json:"expires_in"`
+	AccessTokenExpirationDate  string `json:"expires_at"`
+	RefreshToken               string `json:"refresh_token"`
+	RefreshTokenExpiration     int    `json:"refresh_expires"`
+	RefreshTokenExpirationDate string `json:"refresh_expires_at"`
+	AccountId                  string `json:"account_id"`
+	DisplayName                string `json:"displayName"`
+	InAppId                    string `json:"in_app_id"`
 }
 
 type accountIdStr struct {
@@ -74,14 +84,19 @@ type User struct {
 }
 
 type GameAccount struct {
-	ID             uuid.UUID
-	Username       string
-	RemainingGifts int
-	AccessToken    string
-	RefreshToken   string
-	OwnerUserID    uuid.UUID
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  uuid.UUID
+	DisplayName         string
+	RemainingGifts      int
+	PaVos               int
+	AccessToken         string
+	AccesTokenExp       int
+	AccesTokenExpDate   time.Time
+	RefreshToken        string
+	RefreshTokenExp     int
+	RefreshTokenExpDate time.Time
+	OwnerUserID         uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type Transaction struct {
@@ -122,6 +137,24 @@ func GetUserByUsername(db *sql.DB, username string) (User, error) {
 	return user, err
 }
 
+func GetAllUsers(db *sql.DB) ([]User, error) {
+	var users []User
+	rows, err := db.Query(`SELECT id, username, email, created_at, updated_at FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
 func UpdateUser(db *sql.DB, user User) error {
 	_, err := db.Exec(`UPDATE users SET username = $1, email = $2, password = $3, updated_at = now() WHERE id = $4`, user.Username, user.Email, user.Password, user.ID)
 	return err
@@ -139,24 +172,37 @@ func DeleteUsersByIds(db *sql.DB, ids []uuid.UUID) error {
 
 // ========== GAME ACCOUNT METHODS ==========
 func AddGameAccount(db *sql.DB, account GameAccount) error {
-	_, err := db.Exec(`
-		INSERT INTO game_accounts (
-			id, username, remaining_gifts, access_token, refresh_token, owner_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, now(), now())
-	`,
-		account.ID,
-		account.Username,
-		account.RemainingGifts,
-		account.AccessToken,
-		account.RefreshToken,
-		account.OwnerUserID,
-	)
+	_, err := db.Exec(`INSERT INTO game_accounts (id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date, owner_user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())`, account.ID, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccesTokenExp, account.AccesTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.OwnerUserID)
+	if err != nil {
+		fmt.Printf("Error adding game account: %v", err)
+	}
 	return err
 }
 
 func DeleteGameAccountByUsername(db *sql.DB, username string, ownerID uuid.UUID) error {
 	_, err := db.Exec(`DELETE FROM game_accounts WHERE username = $1 AND owner_user_id = $2`, username, ownerID)
 	return err
+}
+
+// get (only) the ids and refresh tokens of all game accounts in the db
+func GetAllFAccountsIds(db *sql.DB) ([]GameAccountMinimal, error) {
+	var accounts []GameAccountMinimal
+	rows, err := db.Query(`SELECT game_account_id, access_token, refresh_token FROM game_accounts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var account GameAccountMinimal
+		if err := rows.Scan(&account.GameAccountID, &account.AccessToken, &account.RefreshToken); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accounts, nil
 }
 
 func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
@@ -166,19 +212,27 @@ func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
 
 func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) (GameAccount, error) {
 	var account GameAccount
-	err := db.QueryRow(`SELECT id, username, remaining_gifts, access_token, owner_user_id, created_at, updated_at FROM game_accounts WHERE owner_user_id = $1`, ownerID).
-		Scan(&account.ID, &account.Username, &account.RemainingGifts, &account.AccessToken, &account.OwnerUserID, &account.CreatedAt, &account.UpdatedAt)
-	return account, err
+	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE owner_user_id = $1`, ownerID).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccesTokenExp, &account.AccesTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
+	if err != nil {
+		fmt.Printf("Error getting game account: %v", err)
+		return GameAccount{}, err
+	}
+	return account, nil
+
 }
 
 func GetGameAccount(db *sql.DB, id uuid.UUID) (GameAccount, error) {
 	var account GameAccount
-	err := db.QueryRow(`SELECT id, username, remaining_gifts, access_token, owner_user_id, created_at, updated_at FROM game_accounts WHERE id = $1`, id).Scan(&account.ID, &account.Username, &account.RemainingGifts, &account.AccessToken, &account.OwnerUserID, &account.CreatedAt, &account.UpdatedAt)
-	return account, err
+	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE id = $1`, id).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccesTokenExp, &account.AccesTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
+	if err != nil {
+		fmt.Printf("Error getting game account: %v", err)
+		return GameAccount{}, err
+	}
+	return account, nil
 }
 
 func UpdateGameAccount(db *sql.DB, account GameAccount) error {
-	_, err := db.Exec(`UPDATE game_accounts SET username = $1, remaining_gifts = $2, access_token = $3, updated_at = now() WHERE id = $4`, account.Username, account.RemainingGifts, account.AccessToken, account.ID)
+	_, err := db.Exec(`UPDATE game_accounts SET display_name = $1, remaining_gifts = $2, pavos = $3, access_token = $4, acces_token_exp = $5, acces_token_exp_date = $6, refresh_token = $7, refresh_token_exp = $8, refresh_token_exp_date = $9 WHERE id = $10`, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccesTokenExp, account.AccesTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.ID)
 	return err
 }
 
@@ -470,21 +524,53 @@ func HandlerAddNewUser(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
+func HandlerGetAllUsers(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := adminProtectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+		users, err := GetAllUsers(db)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch users", "details": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, users)
+	}
+}
+
 func HandlerRemoveUsers(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		result := adminProtectedEndpointHandler(c)
 		if result != 200 {
 			return
 		}
+		//block deletion of admin account
+		adminUser, err := GetUserByUsername(db, os.Getenv("ADMIN_USER"))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch admin user", "details": err.Error()})
+			return
+		}
+		if adminUser.ID == uuid.Nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Admin user not found"})
+			return
+		}
+
 		var ids []uuid.UUID
 		if err := c.ShouldBindJSON(&ids); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		err := DeleteUsersByIds(db, ids)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not remove users", "details": err.Error()})
+		// Check if any of the IDs are the admin user ID
+		if slices.Contains(ids, adminUser.ID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete admin user"})
+			return
+		}
+
+		errr := DeleteUsersByIds(db, ids)
+		if errr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not remove users", "details": errr.Error()})
 			return
 		}
 		c.String(http.StatusOK, "Users removed successfully")
@@ -587,6 +673,9 @@ func HandlerConnectFAccount(db *sql.DB, list_ofPendingRequests *[]AccountsToConn
 			return
 		}
 
+		//print access code of request 1
+		fmt.Println("Access Token of 1:", tokenResult.AccessToken)
+
 		// Step 2: Request Device Auth URL
 		reqDevice, _ := http.NewRequest("POST", "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization", nil)
 		reqDevice.Header.Set("Authorization", "bearer "+tokenResult.AccessToken)
@@ -605,11 +694,16 @@ func HandlerConnectFAccount(db *sql.DB, list_ofPendingRequests *[]AccountsToConn
 			return
 		}
 
+		// Print the device code and user code
+		fmt.Println("Device Code 2:", deviceResult.DeviceCode)
+		fmt.Println("User Code 2:", deviceResult.UserCode)
+
 		// Step 3: Send login URL back to user
 		c.JSON(http.StatusOK, gin.H{
 			"message":                   "Please complete Fortnite login",
 			"verification_uri_complete": deviceResult.VerificationUriComplete,
 			"user_code":                 deviceResult.UserCode,
+			"expires_in":                deviceResult.expires_in,
 		})
 		pending_request := AccountsToConnect{
 			User_id:     userUUID,
@@ -622,17 +716,22 @@ func HandlerConnectFAccount(db *sql.DB, list_ofPendingRequests *[]AccountsToConn
 
 func UpdateTokensPeriodically(db *sql.DB, list_ofPendingRequests *[]AccountsToConnect) {
 	for {
-		time.Sleep(7 * time.Second) // wait before polling again
-		if len(*list_ofPendingRequests) == 0 {
-			return
-		}
-		for _, pendingRequest := range *list_ofPendingRequests {
+		time.Sleep(7 * time.Second)
+		fmt.Println("Polling for tokens...")
 
-			fmt.Print("Polling for token...")
+		if len(*list_ofPendingRequests) == 0 {
+			continue // Just wait until there is something to process
+		}
+
+		for i := 0; i < len(*list_ofPendingRequests); i++ {
+			pendingRequest := (*list_ofPendingRequests)[i]
+
+			fmt.Println("Polling for each token...")
 			reqPoll, _ := http.NewRequest("POST", "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token", strings.NewReader(
 				"grant_type=device_code&device_code="+pendingRequest.Device_code,
 			))
-			authHeaderf := "basic " + base64.StdEncoding.EncodeToString([]byte("98f7e42c2e3a4f86a74eb43fbb41ed39:0a2449a2-001a-451e-afec-3e812901c4d7"))
+			//authHeaderf := "basic " + base64.StdEncoding.EncodeToString([]byte("98f7e42c2e3a4f86a74eb43fbb41ed39:0a2449a2-001a-451e-afec-3e812901c4d7"))
+			authHeaderf := "basic " + base64.StdEncoding.EncodeToString([]byte("ec684b8c687f479fadea3cb2ad83f5c6:e1f31c211f28413186262d37a13fc84d")) //new key
 
 			reqPoll.Header.Set("Authorization", authHeaderf)
 			reqPoll.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -641,39 +740,48 @@ func UpdateTokensPeriodically(db *sql.DB, list_ofPendingRequests *[]AccountsToCo
 
 			respPoll, err := client.Do(reqPoll)
 			if err != nil {
+				fmt.Println("Error during token polling:", err)
 				continue
 			}
 			defer respPoll.Body.Close()
 
-			if respPoll.StatusCode == 400 {
-				// not authorized yet
+			if respPoll.StatusCode == 400 || respPoll.StatusCode != 200 {
 				continue
 			}
 
-			if respPoll.StatusCode != 200 {
-				continue
-			}
-
-			var loginResult loginResultResponse
+			var loginResult LoginResultResponse
 			if err := json.NewDecoder(respPoll.Body).Decode(&loginResult); err != nil {
-				return
+				fmt.Println("Error decoding response:", err)
+				continue
 			}
 
-			// Save account info to DB
+			//print access code of request 4 (repeats)
+			fmt.Println("Access Token of 4:", loginResult.AccessToken)
+			fmt.Println("Refresh Token of 4:", loginResult.RefreshToken)
+			fmt.Println("GameAccountID of 4:", loginResult.AccountId)
 			err = AddGameAccount(db, GameAccount{
-				ID:             uuid.New(),
-				Username:       loginResult.DisplayName,
-				RemainingGifts: 0,
-				AccessToken:    loginResult.AccessToken,
-				RefreshToken:   loginResult.RefreshToken,
-				OwnerUserID:    pendingRequest.User_id,
-				CreatedAt:      time.Now(),
-				UpdatedAt:      time.Now(),
+				ID:                  loginResult.AccountId,
+				DisplayName:         loginResult.DisplayName,
+				RemainingGifts:      0,
+				PaVos:               0,
+				AccessToken:         loginResult.AccessToken,
+				AccesTokenExp:       loginResult.AccessTokenExpiration,
+				AccesTokenExpDate:   time.Now().Add(time.Duration(loginResult.AccessTokenExpiration) * time.Second),
+				RefreshToken:        loginResult.RefreshToken,
+				RefreshTokenExp:     loginResult.RefreshTokenExpiration,
+				RefreshTokenExpDate: time.Now().Add(time.Duration(loginResult.RefreshTokenExpiration) * time.Second),
+				OwnerUserID:         pendingRequest.User_id,
+				CreatedAt:           time.Now(),
+				UpdatedAt:           time.Now(),
 			})
 			if err != nil {
-				return
+				fmt.Println("Error saving game account:", err)
+				continue
 			}
-			return
+
+			// Optional: remove the processed request from the list
+			*list_ofPendingRequests = append((*list_ofPendingRequests)[:i], (*list_ofPendingRequests)[i+1:]...)
+			i-- // adjust index after removing
 		}
 	}
 }
@@ -708,54 +816,6 @@ func HandlerDisconnectFAccount(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-func HandlerGetFAccountState(db *sql.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		result := protectedEndpointHandler(c)
-		if result != 200 {
-			return
-		}
-
-		userID, exists := c.Get("userID")
-		userIDStr, ok := userID.(string)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
-			return
-		}
-
-		userUUID, err := uuid.Parse(userIDStr)
-
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
-			return
-		}
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-
-		gameAccount, err := GetGameAccountByOwner(db, userUUID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Fortnite account not connected", "details": err.Error()})
-			return
-		}
-
-		// Call Epic Games API to get incoming friend requests
-		//friendRequests,
-		_, friends, err := GetEpicFriendsState(gameAccount.AccessToken, gameAccount.Username)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch Fortnite account state", "details": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"username":        gameAccount.Username,
-			"remaining_gifts": gameAccount.RemainingGifts,
-			"friends":         friends,
-			//"incoming_requests": friendRequests,
-		})
-	}
-}
-
 // ============================ MAIN ============================
 func main() {
 	// Load environment variables from .env file
@@ -787,34 +847,38 @@ func main() {
 		panic(err)
 	}
 
-	var list_ofPendingRequests []AccountsToConnect
+	var refreshTokenList RefreshList
 
 	router := gin.Default()
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
-	router.Use(genericMiddleware)
 
 	allowedOrigins := map[string]bool{
 		"*":                                true,
 		"http://localhost:5173":            true,
 		"https://your-production-site.com": true,
+		"chrome-extension://gmmkjpcadciiokjpikmkkmapphbmdjok": true,
 	}
 
 	router.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
+			fmt.Println("CORS Origin Check:", origin)
 			return allowedOrigins[origin]
 		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Content-Type", "Accept"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"X-Total-Count"},
 		AllowWildcard:    true,
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
 
+	router.Use(genericMiddleware)
+
 	gin.SetMode(gin.ReleaseMode)
 
 	authorized := router.Group("/", AuthMiddleware())
+	authorized.Use(genericMiddleware)
 
 	router.GET("/", func(c *gin.Context) {
 		c.String(http.StatusOK, "Welcome Gin Server")
@@ -823,15 +887,19 @@ func main() {
 	authorized.POST("/addnewuser", HandlerAddNewUser(db))
 	authorized.POST("/removeusers", HandlerRemoveUsers(db))
 	authorized.POST("/updateuser", HandlerUpdateUser(db))
-	authorized.POST("/connectfaccount", HandlerConnectFAccount(db, &list_ofPendingRequests))
+	authorized.GET("/getalluser", HandlerGetAllUsers(db))
 	authorized.POST("/disconnectfortniteaccount", HandlerDisconnectFAccount(db))
+	authorized.GET("/fortniteaccountsofuser", HandlerGetGameAccountsByOwner(db))
 	//authorized.GET("/faccountstate", HandlerGetFAccountState(db))
 	//Falta: go routine para revisar periodicamente por solicitudes de amistad
 
 	router.POST("/loginform", HandlerLoginForm(db, cfg.AdminUser))
 
-	go UpdateTokensPeriodically(db, &list_ofPendingRequests)
+	authorized.POST("/connectfaccount", HandlerConnectFAccount(db, &list_ofPendingRequests))
 
+	//go UpdateTokensPeriodically(db, &list_ofPendingRequests)
+	go StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes) // Check every 5 minutes
+	go StartTokenRefresher(db, &refreshTokenList)                // Check every 10 minutes
 	router.Run(":8080")
 }
 
@@ -844,4 +912,442 @@ func genericMiddleware(c *gin.Context) {
 		return
 	}
 	c.Next()
+}
+
+type FriendRequest struct {
+	AccountID string `json:"accountId"`
+	Groups    []any  `json:"groups"` // adjust type if needed
+	Mutual    int    `json:"mutual"`
+	Alias     string `json:"alias"`
+	Note      string `json:"note"`
+	Favorite  bool   `json:"favorite"`
+	Created   string `json:"created"`
+}
+
+func StartFriendRequestHandler(db *sql.DB, intervalMinutes int) {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for {
+		time.Sleep(time.Duration(intervalMinutes) * time.Minute)
+
+		accounts, err := GetAllFAccountsIds(db)
+		if err != nil {
+			fmt.Println("Failed to retrieve accounts:", err)
+			continue
+		}
+
+		for _, account := range accounts {
+			//sleep for 1+random second to avoid rate limiting
+			fmt.Printf("checking incoming friends of  %s", account.GameAccountID)
+
+			time.Sleep(time.Duration(rand.Float32()+1) * time.Second)
+			friendRequests, err := getIncomingRequests(client, account, db)
+			if err != nil {
+				fmt.Printf("Failed to get friend requests for account %s: %v\n", account.GameAccountID, err)
+				continue
+			}
+
+			if len(friendRequests) > 0 {
+				fmt.Println()
+				err := acceptFriendRequests(client, account, friendRequests)
+				if err != nil {
+					fmt.Printf("Failed to accept friend requests for account %s: %v\n", account.GameAccountID, err)
+				} else {
+					fmt.Printf("Accepted %d friend requests for account %s\n", len(friendRequests), account.GameAccountID)
+				}
+			}
+		}
+	}
+}
+
+func getIncomingRequests(client *http.Client, account GameAccountMinimal, db *sql.DB) ([]FriendRequest, error) {
+	url := fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/incoming", account.GameAccountID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		//refresh token and try again
+		fmt.Printf("Refreshing token of: %s\n", account.GameAccountID)
+
+		newTokens, err := refreshAccessToken(client, "basic "+base64.StdEncoding.EncodeToString([]byte("98f7e42c2e3a4f86a74eb43fbb41ed39:0a2449a2-001a-451e-afec-3e812901c4d7")), account.RefreshToken)
+		if err != nil {
+			fmt.Printf("Failed to refresh token: %v", err)
+		}
+		err = UpdateTokensInDB(db, account.GameAccountID, newTokens)
+		if err != nil {
+			fmt.Printf("Failed to update token in DB: %v", err)
+		}
+		req, err = http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	req.Header.Set("Authorization", "bearer "+account.AccessToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var friends []FriendRequest
+	err = json.NewDecoder(resp.Body).Decode(&friends)
+	return friends, err
+}
+
+func acceptFriendRequests(client *http.Client, db *sql.DB, account GameAccountMinimal, friends []FriendRequest) error {
+	for _, friend := range friends {
+		fmt.Printf("Accepting friend request from %s\n", friend.AccountID)
+		url := fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", account.GameAccountID, friend.AccountID)
+		req, err := http.NewRequest("POST", url, nil)
+		//this responds 204 as correct
+		if err != nil {
+			//refresh token and try again
+			fmt.Printf("Refreshing token of: %s\n", account.GameAccountID)
+			newTokens, err := refreshAccessToken(client, "basic "+base64.StdEncoding.EncodeToString([]byte("98f7e42c2e3a4f86a74eb43fbb41ed39:0a2449a2-001a-451e-afec-3e812901c4d7")), account.RefreshToken)
+			if err != nil {
+				fmt.Printf("Failed to refresh token: %v", err)
+			}
+			err = UpdateTokensInDB(db, account.GameAccountID, newTokens)
+			if err != nil {
+				fmt.Printf("Failed to update token in DB: %v", err)
+			}
+			req, err = http.NewRequest("POST", url, nil)
+			if err != nil {
+				fmt.Printf("Failed to create request: %v", err)
+			}
+			return err
+		}
+		req.Header.Set("Authorization", "bearer "+account.AccessToken)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != 204 {
+			return fmt.Errorf("failed to accept friend %s, status: %d", friend.AccountID, resp.StatusCode)
+		}
+	}
+	return nil
+}
+
+// struct map (id) => {access_token_exp_time, refresh_token}
+type RefreshList map[string]struct {
+	ID            string
+	AccesTokenExp time.Time
+	RefreshToken  string
+}
+
+// loop, check if token is less than 15 minutes away from expiring, if so, refresh it
+func StartTokenRefresher(db *sql.DB, refreshList *RefreshList) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	authHeader := "basic " + base64.StdEncoding.EncodeToString([]byte("ec684b8c687f479fadea3cb2ad83f5c6:e1f31c211f28413186262d37a13fc84d"))
+
+	for {
+		time.Sleep(time.Duration(10) * time.Minute)
+
+		for id, tokenInfo := range *refreshList {
+			if time.Until(tokenInfo.AccesTokenExp) < 15*time.Minute {
+				fmt.Printf("Refreshing token for account %s\n", id)
+				tokenResult, err := refreshAccessToken(client, authHeader, tokenInfo.RefreshToken)
+				if err != nil {
+					fmt.Printf("Failed to refresh token: %v", err)
+					continue
+				}
+				var gameId uuid.UUID = uuid.MustParse(tokenResult.AccountId)
+
+				err = UpdateGameAccount(db, GameAccount{
+					ID:                  gameId,
+					DisplayName:         tokenResult.DisplayName,
+					RemainingGifts:      0,
+					PaVos:               0,
+					AccessToken:         tokenResult.AccessToken,
+					AccesTokenExp:       tokenResult.AccessTokenExpiration,
+					AccesTokenExpDate:   time.Now().Add(time.Duration(tokenResult.AccessTokenExpiration) * time.Second),
+					RefreshToken:        tokenResult.RefreshToken,
+					RefreshTokenExp:     tokenResult.RefreshTokenExpiration,
+					RefreshTokenExpDate: time.Now().Add(time.Duration(tokenResult.RefreshTokenExpiration) * time.Second),
+					CreatedAt:           time.Now(),
+					UpdatedAt:           time.Now(),
+				})
+				if err != nil {
+					fmt.Printf("Failed to update token in DB: %v", err)
+					continue
+				}
+			}
+		}
+	}
+}
+
+func refreshAccessToken(client *http.Client, authHeader string, refreshToken string) (LoginResultResponse, error) {
+	form := url.Values{}
+	form.Add("grant_type", "refresh_token")
+	form.Add("refresh_token", refreshToken)
+
+	req, err := http.NewRequest("POST", "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return LoginResultResponse{}, err
+	}
+
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return LoginResultResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return LoginResultResponse{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var tokenResp LoginResultResponse
+	err = json.NewDecoder(resp.Body).Decode(&tokenResp)
+	if err != nil {
+		return LoginResultResponse{}, err
+	}
+
+	return tokenResp, nil
+}
+
+// return current user fortnite accounts
+func GetGameAccountsByOwner(db *sql.DB, ownerUserID uuid.UUID) ([]GameAccount, error) {
+	query := `SELECT id, display_name, remaining_gifts, access_token, refresh_token, created_at, updated_at FROM game_accounts WHERE owner_user_id = $1`
+	rows, err := db.Query(query, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var accounts []GameAccount
+	for rows.Next() {
+		var account GameAccount
+
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+// endpoint to send all game accounts of the user
+func HandlerGetGameAccountsByOwner(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := protectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		userID, exists := c.Get("userID")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+
+		userIDStr, ok := userID.(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+			return
+		}
+
+		userUUID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
+			return
+		}
+
+		gameAccounts, err := GetGameAccountsByOwner(db, userUUID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch game accounts", "details": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gameAccounts)
+	}
+}
+
+// endpoint handler to send gift
+// func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
+// 	return func(c *gin.Context) {
+// 		result := protectedEndpointHandler(c)
+// 		if result != 200 {
+// 			return
+// 		}
+
+// 		userID, exists := c.Get("userID")
+// 		if !exists {
+// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+// 			return
+// 		}
+
+// 		userIDStr, ok := userID.(string)
+// 		if !ok {
+// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+// 			return
+// 		}
+
+// 		userUUID, err := uuid.Parse(userIDStr)
+// 		if err != nil {
+// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
+// 			return
+// 		}
+
+// 		var req struct {
+// 			AccountID string `json:"account_id" binding:"required"`
+// 			UserID    string `json:"user_id" binding:"required"`
+// 			GiftItem  string `json:"gift_item" binding:"required"`
+// 			GiftPrice int    `json:"gift_price" binding:"required"`
+// 			GiftWrap  string `json:"gift_wrap" binding:"required"`
+// 			Message   string `json:"message" binding:"required"`
+// 		}
+// 		if err := c.ShouldBindJSON(&req); err != nil {
+// 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+// 			return
+// 		}
+
+// 		err = sendGiftRequest(req.AccountID, req.UserID, req.GiftItem, req.GiftPrice, req.GiftWrap, req.Message)
+// 		if err != nil {
+// 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send gift", "details": err.Error()})
+// 			return
+// 		}
+
+// 		c.JSON(http.StatusOK, gin.H{"message": "Gift sent successfully"})
+// 	}
+// }
+
+// def send_gift_request(account_id, access_token, offer_id, final_price, user_id):
+//   url = f"https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/{account_id}/client/GiftCatalogEntry?profileId=common_core"
+//   payload = {
+//       "offerId": offer_id,
+//       "currency": "MtxCurrency",
+//       "currencySubType": "",
+//       "expectedTotalPrice": final_price,
+//       "gameContext": "Frontend.CatabaScreen",
+//       "receiverAccountIds": [user_id],
+//       "giftWrapTemplateId": "",
+//       "personalMessage": ""
+//   }
+//   headers = {
+//       "Content-Type": "application/json",
+//       "Authorization": f"Bearer {access_token}"
+//   }
+
+//   response = requests.post(url, json=payload, headers=headers)
+//   with open('config.json', 'r') as file:
+//     account_data = json.load(file)
+//   for account_info in account_data:
+//     device_id = account_info['deviceId']
+//     secret = account_info['secret']
+//   if response.status_code == 200:
+//     print(f"[{account_info['accountId']}] Sent cosmetic gift to {user_id}")
+
+// Handle Authorization_Code login  (input authorization code) output:
+//raw example
+
+// POST /account/api/oauth/token HTTP/1.1
+// Accept: */*
+// Accept-Encoding: deflate, gzip
+// User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0
+// Authorization: basic ZWM2ODRiOGM2ODdmNDc5ZmFkZWEzY2IyYWQ4M2Y1YzY6ZTFmMzFjMjExZjI4NDEzMTg2MjYyZDM3YTEzZmM4NGQ=
+// Host: account-public-service-prod.ol.epicgames.com
+// Content-Type: application/x-www-form-urlencoded
+// Content-Length: 67
+
+// grant_type=authorization_code&code=14e04b40b04f46d1a0436802995d555c
+
+//response type LoginResultResponse
+
+func HandlerAuthorizationCodeLogin(db *sql.DB, refreshTokensList *RefreshList) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := protectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		userID, exists := c.Get("userID")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+
+		userIDStr, ok := userID.(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+			return
+		}
+
+		userUUID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
+			return
+		}
+
+		var req struct {
+			Code string `json:"code" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		authHeader := "basic " + base64.StdEncoding.EncodeToString([]byte("ec684b8c687f479fadea3cb2ad83f5c6:e1f31c211f28413186262d37a13fc84d"))
+
+		reqToken, _ := http.NewRequest("POST", "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token", strings.NewReader(
+			fmt.Sprintf("grant_type=authorization_code&code=%s", req.Code),
+		))
+		reqToken.Header.Set("Authorization", authHeader)
+		reqToken.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		respToken, err := client.Do(reqToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not get client token", "details": err.Error()})
+			return
+		}
+		defer respToken.Body.Close()
+
+		var tokenResult LoginResultResponse
+		if err := json.NewDecoder(respToken.Body).Decode(&tokenResult); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid client token response", "details": err.Error()})
+			return
+		}
+		var gameId uuid.UUID = uuid.MustParse(tokenResult.AccountId)
+
+		err = AddGameAccount(db, GameAccount{
+			ID:                  gameId,
+			DisplayName:         tokenResult.DisplayName,
+			RemainingGifts:      0,
+			PaVos:               0,
+			AccessToken:         tokenResult.AccessToken,
+			AccesTokenExp:       tokenResult.AccessTokenExpiration,
+			AccesTokenExpDate:   time.Now().Add(time.Duration(tokenResult.AccessTokenExpiration) * time.Second),
+			RefreshToken:        tokenResult.RefreshToken,
+			RefreshTokenExp:     tokenResult.RefreshTokenExpiration,
+			RefreshTokenExpDate: time.Now().Add(time.Duration(tokenResult.RefreshTokenExpiration) * time.Second),
+			OwnerUserID:         userUUID,
+			CreatedAt:           time.Now(),
+			UpdatedAt:           time.Now(),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save game account", "details": err.Error()})
+			return
+		}
+
+		// Add the new token to the refresh list
+		(*refreshTokensList)[tokenResult.AccountId] = struct {
+			ID            string
+			AccesTokenExp time.Time
+			RefreshToken  string
+		}{
+			ID:            tokenResult.AccountId,
+			AccesTokenExp: time.Now().Add(time.Duration(tokenResult.AccessTokenExpiration) * time.Second),
+			RefreshToken:  tokenResult.RefreshToken,
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Fortnite account connected successfully", "id": tokenResult.AccountId, "username": tokenResult.DisplayName})
+	}
 }
