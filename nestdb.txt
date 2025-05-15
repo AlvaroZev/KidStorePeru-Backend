@@ -19,13 +19,16 @@ CREATE TABLE users (
 
 -- Game Accounts Table
 CREATE TABLE game_accounts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username TEXT NOT NULL,
-    remaining_gifts INTEGER DEFAULT 0,
-    access_token TEXT NOT NULL,
-    refresh_token TEXT NOT NULL
+    id UUID PRIMARY KEY NOT NULL,
+    display_name TEXT NOT NULL,
+    remaining_gifts INTEGER DEFAULT 0,  0
     owner_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    game_account_id TEXT NOT NULL
+    access_token TEXT NOT NULL,
+    access_token_exp INTEGER DEFAULT 0,
+    access_token_exp_date TIMESTAMPTZ DEFAULT now(),
+    refresh_token TEXT NOT NULL,
+    refresh_token_exp INTEGER DEFAULT 0,
+    refresh_token_exp_date TIMESTAMPTZ DEFAULT now(),
     authorization_code TEXT NOT NULL
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),
