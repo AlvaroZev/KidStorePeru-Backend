@@ -723,6 +723,14 @@ func main() {
 		c.String(http.StatusOK, "Welcome Gin Server")
 	})
 
+	authorized.GET("/protected", func(ctx *gin.Context) {
+		result := protectedEndpointHandler(ctx)
+		if result != 200 {
+			return
+		}
+		ctx.JSON(http.StatusOK, gin.H{"message": "Welcome to the protected area"})
+	})
+
 	//login endpoint
 	router.POST("/loginform", HandlerLoginForm(db, cfg.AdminUser))
 
