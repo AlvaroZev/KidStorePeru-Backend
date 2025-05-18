@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -51,7 +52,7 @@ type AccessTokenResult struct {
 	AccessToken string `json:"access_token"`
 }
 
-type deviceResultResponse struct {
+type DeviceResultResponse struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
 	VerificationUriComplete string `json:"verification_uri_complete"`
@@ -100,15 +101,16 @@ type GameAccount struct {
 }
 
 type Transaction struct {
-	ID               uuid.UUID
-	GameAccountID    uuid.UUID
-	ReceiverID       *string
-	ReceiverUsername *string
-	ObjectStoreID    string
-	ObjectStoreName  string
-	RegularPrice     float64
-	FinalPrice       float64
-	CreatedAt        time.Time
+	ID              uuid.UUID
+	GameAccountID   uuid.UUID
+	ReceiverID      *string
+	ReceiverName    *string
+	ObjectStoreID   string
+	ObjectStoreName string
+	RegularPrice    float64
+	FinalPrice      float64
+	GiftImage       string
+	CreatedAt       time.Time
 }
 
 var secretKey = []byte("secret-key")
@@ -172,7 +174,7 @@ func DeleteUsersByIds(db *sql.DB, ids []uuid.UUID) error {
 
 // ========== GAME ACCOUNT METHODS ==========
 func AddGameAccount(db *sql.DB, account GameAccount) error {
-	_, err := db.Exec(`INSERT INTO game_accounts (id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date, owner_user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())`, account.ID, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccessTokenExp, account.AccessTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.OwnerUserID)
+	_, err := db.Exec(`INSERT INTO game_accounts (id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date, owner_user_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())`, account.ID, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccessTokenExp, account.AccessTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.OwnerUserID)
 	if err != nil {
 		fmt.Printf("Error adding game account: %v", err)
 	}
@@ -181,6 +183,11 @@ func AddGameAccount(db *sql.DB, account GameAccount) error {
 
 func DeleteGameAccountByUsername(db *sql.DB, username string, ownerID uuid.UUID) error {
 	_, err := db.Exec(`DELETE FROM game_accounts WHERE username = $1 AND owner_user_id = $2`, username, ownerID)
+	return err
+}
+
+func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
+	_, err := db.Exec(`DELETE FROM game_accounts WHERE id = $1`, id)
 	return err
 }
 
@@ -205,14 +212,9 @@ func DeleteGameAccountByUsername(db *sql.DB, username string, ownerID uuid.UUID)
 // 	return accounts, nil
 // }
 
-func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
-	_, err := db.Exec(`DELETE FROM game_accounts WHERE id = $1`, id)
-	return err
-}
-
 func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) (GameAccount, error) {
 	var account GameAccount
-	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE owner_user_id = $1`, ownerID).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
+	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE owner_user_id = $1`, ownerID).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
 	if err != nil {
 		fmt.Printf("Error getting game account: %v", err)
 		return GameAccount{}, err
@@ -223,7 +225,7 @@ func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) (GameAccount, error) {
 
 func GetGameAccount(db *sql.DB, id uuid.UUID) (GameAccount, error) {
 	var account GameAccount
-	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, acces_token_exp, acces_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE id = $1`, id).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
+	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE id = $1`, id).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
 	if err != nil {
 		fmt.Printf("Error getting game account: %v", err)
 		return GameAccount{}, err
@@ -232,7 +234,7 @@ func GetGameAccount(db *sql.DB, id uuid.UUID) (GameAccount, error) {
 }
 
 func UpdateGameAccount(db *sql.DB, account GameAccount) error {
-	_, err := db.Exec(`UPDATE game_accounts SET display_name = $1, remaining_gifts = $2, pavos = $3, access_token = $4, acces_token_exp = $5, acces_token_exp_date = $6, refresh_token = $7, refresh_token_exp = $8, refresh_token_exp_date = $9 WHERE id = $10`, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccessTokenExp, account.AccessTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.ID)
+	_, err := db.Exec(`UPDATE game_accounts SET display_name = $1, remaining_gifts = $2, pavos = $3, access_token = $4, s_token_exp = $5, access_token_exp_date = $6, refresh_token = $7, refresh_token_exp = $8, refresh_token_exp_date = $9 WHERE id = $10`, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccessTokenExp, account.AccessTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.ID)
 	return err
 }
 
@@ -243,19 +245,22 @@ func DeleteGameAccount(db *sql.DB, id uuid.UUID) error {
 
 // ========== TRANSACTION METHODS ==========
 func AddTransaction(db *sql.DB, tx Transaction) error {
-	_, err := db.Exec(`INSERT INTO transactions (id, game_account_id, receiver_id, receiver_username, object_store_id, object_store_name, regular_price, final_price, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`, tx.ID, tx.GameAccountID, tx.ReceiverID, tx.ReceiverUsername, tx.ObjectStoreID, tx.ObjectStoreName, tx.RegularPrice, tx.FinalPrice)
+	_, err := db.Exec(`INSERT INTO transactions (id, game_account_id, receiver_id, object_store_id, object_store_name, regular_price, final_price, gift_image, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`, tx.ID, tx.GameAccountID, tx.ReceiverID, tx.ObjectStoreID, tx.ObjectStoreName, tx.RegularPrice, tx.FinalPrice, tx.GiftImage)
+	if err != nil {
+		fmt.Printf("Error adding transaction: %v", err)
+	}
 	return err
+
 }
 
 func GetTransaction(db *sql.DB, id uuid.UUID) (Transaction, error) {
 	var tx Transaction
-	err := db.QueryRow(`SELECT id, game_account_id, receiver_id, receiver_username, object_store_id, object_store_name, regular_price, final_price, created_at FROM transactions WHERE id = $1`, id).Scan(&tx.ID, &tx.GameAccountID, &tx.ReceiverID, &tx.ReceiverUsername, &tx.ObjectStoreID, &tx.ObjectStoreName, &tx.RegularPrice, &tx.FinalPrice, &tx.CreatedAt)
-	return tx, err
-}
-
-func UpdateTransaction(db *sql.DB, tx Transaction) error {
-	_, err := db.Exec(`UPDATE transactions SET receiver_id = $1, receiver_username = $2, object_store_id = $3, object_store_name = $4, regular_price = $5, final_price = $6 WHERE id = $7`, tx.ReceiverID, tx.ReceiverUsername, tx.ObjectStoreID, tx.ObjectStoreName, tx.RegularPrice, tx.FinalPrice, tx.ID)
-	return err
+	err := db.QueryRow(`SELECT id, game_account_id, receiver_id, receiver_username, object_store_id, object_store_name, regular_price, final_price, gift_image, created_at FROM transactions WHERE id = $1`, id).Scan(&tx.ID, &tx.GameAccountID, &tx.ReceiverID, &tx.ReceiverName, &tx.ObjectStoreID, &tx.ObjectStoreName, &tx.RegularPrice, &tx.FinalPrice, &tx.GiftImage, &tx.CreatedAt)
+	if err != nil {
+		fmt.Printf("Error getting transaction: %v", err)
+		return Transaction{}, err
+	}
+	return tx, nil
 }
 
 func DeleteTransaction(db *sql.DB, id uuid.UUID) error {
@@ -633,20 +638,14 @@ func HandlerDisconnectFAccount(db *sql.DB) gin.HandlerFunc {
 		}
 
 		var req struct {
-			Username string `json:"username" binding:"required"`
+			Id string `json:"id" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		userID, exists := c.Get("userID")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-
-		err := DeleteGameAccountByUsername(db, req.Username, userID.(uuid.UUID))
+		err := DeleteGameAccountByID(db, uuid.MustParse(req.Id))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not disconnect Fortnite account", "details": err.Error()})
 			return
@@ -686,7 +685,7 @@ func main() {
 		panic(err)
 	}
 
-	var refreshTokenList RefreshList
+	var refreshTokenList RefreshList = make(RefreshList)
 
 	router := gin.Default()
 	router.Use(gin.Logger())
@@ -723,23 +722,97 @@ func main() {
 		c.String(http.StatusOK, "Welcome Gin Server")
 	})
 
+	//login endpoint
+	router.POST("/loginform", HandlerLoginForm(db, cfg.AdminUser))
+
+	//user endpoints
 	authorized.POST("/addnewuser", HandlerAddNewUser(db))
 	authorized.POST("/removeusers", HandlerRemoveUsers(db))
 	authorized.POST("/updateuser", HandlerUpdateUser(db))
 	authorized.GET("/getalluser", HandlerGetAllUsers(db))
+
+	//fortnite account endpoints
 	authorized.POST("/disconnectfortniteaccount", HandlerDisconnectFAccount(db))
 	authorized.GET("/fortniteaccountsofuser", HandlerGetGameAccountsByOwner(db))
+	authorized.GET("/allfortniteaccounts", HandlerGetAllGameAccounts(db))
 	//authorized.GET("/faccountstate", HandlerGetFAccountState(db))
-	//Falta: go routine para revisar periodicamente por solicitudes de amistad
-
-	router.POST("/loginform", HandlerLoginForm(db, cfg.AdminUser))
-
 	authorized.POST("/connectfaccount", HandlerAuthorizationCodeLogin(db, &refreshTokenList))
+	authorized.POST("/sendGift", HandlerSendGift(db, &refreshTokenList))
+	authorized.POST("/searchfortnitefriend", HandlerSearchOnlineFortniteAccount(db, &refreshTokenList))
 
-	//go UpdateTokensPeriodically(db, &list_ofPendingRequests)
-	go StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes, &refreshTokenList) // Check every 5 minutes
-	go StartTokenRefresher(db, &refreshTokenList)                                   // Check every 10 minutes
+	//common
+	NestTokensInRefreshList(db, &refreshTokenList)
+
+	//go StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes, &refreshTokenList) // Check every 5 minutes
+	go StartTokenRefresher(db, &refreshTokenList) // Check every 10 minutes
+
 	router.Run(":8080")
+}
+
+func HandlerGetAllGameAccounts(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := adminProtectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+		accounts, err := GetAllGameAccounts(db)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch game accounts", "details": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, accounts)
+	}
+}
+
+func GetAllGameAccounts(db *sql.DB) ([]GameAccount, error) {
+	var accounts []GameAccount
+	rows, err := db.Query(`SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var account GameAccount
+		if err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+func NestTokensInRefreshList(db *sql.DB, refreshList *RefreshList) {
+	// Get all game accounts from the database
+	rows, err := db.Query(`SELECT id, access_token, access_token_exp_date, refresh_token FROM game_accounts`)
+	if err != nil {
+		fmt.Printf("Error fetching game accounts: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var account accountTokens
+		if err := rows.Scan(&account.ID, &account.AccessToken, &account.AccessTokenExp, &account.RefreshToken); err != nil {
+			fmt.Printf("Error scanning game account: %v", err)
+			continue
+		}
+		//convert account.ID to string
+		accountId := account.ID.String()
+
+		tempMap := *refreshList
+
+		//print accountId and account.ID
+		fmt.Printf("Account ID: %s, Account ID (UUID): %s\n", accountId, account.ID.String())
+		(tempMap)[accountId] = accountTokens{
+			ID:             account.ID,
+			AccessToken:    account.AccessToken,
+			RefreshToken:   account.RefreshToken,
+			AccessTokenExp: account.AccessTokenExp,
+		}
+
+		*refreshList = tempMap
+	}
 }
 
 func genericMiddleware(c *gin.Context) {
@@ -891,13 +964,12 @@ func acceptFriendRequests(client *http.Client, db *sql.DB, account accountTokens
 }
 
 type accountTokens struct {
-	ID             string
+	ID             uuid.UUID
 	AccessTokenExp time.Time
 	RefreshToken   string
 	AccessToken    string
 }
 
-// struct map (id) => {access_token_exp_time, refresh_token}
 type RefreshList map[string]accountTokens
 
 // loop, check if token is less than 15 minutes away from expiring, if so, refresh it
@@ -953,16 +1025,26 @@ func refreshAccessToken(client *http.Client, refreshToken string, refreshList *R
 		return LoginResultResponse{}, err
 	}
 
+	AccountId, err := uuid.Parse(tokenResult.AccountId)
+	if err != nil {
+		fmt.Printf("Failed to parse game ID: %v", err)
+		return LoginResultResponse{}, err
+	}
+
 	//UPDATE refreshList
 	(*refreshList)[tokenResult.AccountId] = accountTokens{
-		ID:             tokenResult.AccountId,
+		ID:             AccountId,
 		AccessTokenExp: time.Now().Add(time.Duration(tokenResult.AccessTokenExpiration) * time.Second),
 		RefreshToken:   tokenResult.RefreshToken,
 		AccessToken:    tokenResult.AccessToken,
 	}
 
 	//UPDATE DB
-	var gameId uuid.UUID = uuid.MustParse(tokenResult.AccountId)
+	gameId, err := uuid.Parse(tokenResult.AccountId)
+	if err != nil {
+		fmt.Printf("Failed to parse game ID: %v", err)
+		return LoginResultResponse{}, err
+	}
 
 	err = UpdateGameAccount(db, GameAccount{
 		ID:                  gameId,
@@ -999,6 +1081,11 @@ func GetGameAccountsByOwner(db *sql.DB, ownerUserID uuid.UUID) ([]GameAccount, e
 	var accounts []GameAccount
 	for rows.Next() {
 		var account GameAccount
+
+		err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.AccessToken, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
 
 		accounts = append(accounts, account)
 	}
@@ -1037,60 +1124,147 @@ func HandlerGetGameAccountsByOwner(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusOK, gameAccounts)
+		//print game accounts
+
+		// Map to simplified response
+		type SimplifiedAccount struct {
+			ID             string `json:"id"`
+			DisplayName    string `json:"displayName"`
+			Pavos          int    `json:"pavos"`
+			RemainingGifts int    `json:"remainingGifts"`
+		}
+
+		var resultAccounts []SimplifiedAccount = []SimplifiedAccount{}
+		for _, account := range gameAccounts {
+			resultAccounts = append(resultAccounts, SimplifiedAccount{
+				ID:             account.ID.String(),
+				DisplayName:    account.DisplayName,
+				Pavos:          0, // You can replace this with actual V-Bucks if you track them
+				RemainingGifts: account.RemainingGifts,
+			})
+		}
+
+		c.JSON(http.StatusOK, resultAccounts)
 	}
 }
 
 // endpoint handler to send gift
-// func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
-// 	return func(c *gin.Context) {
-// 		result := protectedEndpointHandler(c)
-// 		if result != 200 {
-// 			return
-// 		}
+func HandlerSendGift(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := protectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
 
-// 		userID, exists := c.Get("userID")
-// 		if !exists {
-// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-// 			return
-// 		}
+		userID, exists := c.Get("userID")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
 
-// 		userIDStr, ok := userID.(string)
-// 		if !ok {
-// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
-// 			return
-// 		}
+		userIDStr, ok := userID.(string)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+			return
+		}
 
-// 		userUUID, err := uuid.Parse(userIDStr)
-// 		if err != nil {
-// 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
-// 			return
-// 		}
+		userUUID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
+			return
+		}
 
-// 		var req struct {
-// 			AccountID string `json:"account_id" binding:"required"`
-// 			UserID    string `json:"user_id" binding:"required"`
-// 			GiftItem  string `json:"gift_item" binding:"required"`
-// 			GiftPrice int    `json:"gift_price" binding:"required"`
-// 			GiftWrap  string `json:"gift_wrap" binding:"required"`
-// 			Message   string `json:"message" binding:"required"`
-// 		}
-// 		if err := c.ShouldBindJSON(&req); err != nil {
-// 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-// 			return
-// 		}
+		var req struct {
+			AccountID    string `json:"account_id" binding:"required"`
+			ReceiverID   string `json:"receiver_id" binding:"required"`
+			ReceiverName string `json:"receiver_username" binding:"required"`
+			GiftId       string `json:"gift_id" binding:"required"`
+			GiftPrice    int    `json:"gift_price" binding:"required"`
+			GiftName     string `json:"gift_name" binding:"required"`
+			Message      string `json:"message" binding:"required"`
+			GiftImage    string `json:"gift_image" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
-// 		err = sendGiftRequest(req.AccountID, req.UserID, req.GiftItem, req.GiftPrice, req.GiftWrap, req.Message)
-// 		if err != nil {
-// 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send gift", "details": err.Error()})
-// 			return
-// 		}
+		//fetch access token from refresh list
+		tokens, ok := (*refreshList)[req.AccountID]
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Account not found in refresh list"})
+			return
+		}
 
-// 		c.JSON(http.StatusOK, gin.H{"message": "Gift sent successfully"})
-// 	}
-// }
+		err = sendGiftRequest(req.AccountID, req.ReceiverID, req.GiftId, req.GiftPrice, tokens.AccessToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send gift", "details": err.Error()})
+			return
+		}
 
-// def send_gift_request(account_id, access_token, offer_id, final_price, user_id):
+		err = AddTransaction(db, Transaction{
+			ID:              uuid.New(),
+			GameAccountID:   userUUID,
+			ReceiverID:      &req.ReceiverID,
+			ReceiverName:    &req.ReceiverName,
+			ObjectStoreID:   req.GiftId,
+			ObjectStoreName: req.GiftName,
+			RegularPrice:    float64(req.GiftPrice),
+			FinalPrice:      float64(req.GiftPrice),
+			GiftImage:       req.GiftImage,
+			CreatedAt:       time.Now(),
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not add transaction", "details": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Gift sent successfully"})
+
+	}
+}
+
+func sendGiftRequest(accountID, userID, giftItem string, giftPrice int, accessToken string) error {
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	payload := map[string]interface{}{
+		"offerId":            giftItem,
+		"currency":           "MtxCurrency",
+		"currencySubType":    "",
+		"expectedTotalPrice": giftPrice,
+		"gameContext":        "Frontend.CatabaScreen",
+		"receiverAccountIds": []string{userID},
+		"giftWrapTemplateId": "",
+		"personalMessage":    "",
+	}
+
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/%s/client/GiftCatalogEntry?profileId=common_core", accountID),
+		bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("failed to send gift, status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// func send_gift_request(account_id, access_token, offer_id, final_price, user_id):
 //   url = f"https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/{account_id}/client/GiftCatalogEntry?profileId=common_core"
 //   payload = {
 //       "offerId": offer_id,
@@ -1145,6 +1319,9 @@ func HandlerAuthorizationCodeLogin(db *sql.DB, refreshList *RefreshList) gin.Han
 			return
 		}
 
+		//print userID
+		fmt.Printf("User ID: %s\n", userID)
+
 		userIDStr, ok := userID.(string)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
@@ -1186,7 +1363,18 @@ func HandlerAuthorizationCodeLogin(db *sql.DB, refreshList *RefreshList) gin.Han
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid client token response", "details": err.Error()})
 			return
 		}
-		var gameId uuid.UUID = uuid.MustParse(tokenResult.AccountId)
+		gameId, err := uuid.Parse(tokenResult.AccountId)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid game account ID", "details": err.Error()})
+			return
+		}
+		if gameId == uuid.Nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid game account ID"})
+			return
+		}
+
+		//print gameId and user UUID
+		fmt.Printf("Game ID: %s, User UUID: %s\n", gameId.String(), userUUID.String())
 
 		err = AddGameAccount(db, GameAccount{
 			ID:                  gameId,
@@ -1207,10 +1395,15 @@ func HandlerAuthorizationCodeLogin(db *sql.DB, refreshList *RefreshList) gin.Han
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save game account", "details": err.Error()})
 			return
 		}
+		AccountId, err := uuid.Parse(tokenResult.AccountId)
+		if err != nil {
+			fmt.Printf("Failed to parse game ID: %v", err)
+			return
+		}
 
 		// Add the new token to the refresh list
 		(*refreshList)[tokenResult.AccountId] = accountTokens{
-			ID:             tokenResult.AccountId,
+			ID:             AccountId,
 			AccessTokenExp: time.Now().Add(time.Duration(tokenResult.AccessTokenExpiration) * time.Second),
 			RefreshToken:   tokenResult.RefreshToken,
 			AccessToken:    tokenResult.AccessToken,
@@ -1220,12 +1413,144 @@ func HandlerAuthorizationCodeLogin(db *sql.DB, refreshList *RefreshList) gin.Han
 	}
 }
 
-//handle search for fortnite account by username
+//handle search for fortnite account by username HandlerSearchOnlineFortniteAccount
 // GET /account/api/public/account/displayName/kidStore0002 HTTP/1.1
 // Accept: */*
 // Accept-Encoding: deflate, gzip
 // User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0
 // Authorization: Bearer 30dc3800b33a47b199a32e37789efbe8
 // Host: account-public-service-prod.ol.epicgames.com
+
+func HandlerSearchOnlineFortniteAccount(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := protectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		var req struct {
+			DisplayName string `json:"display_name" binding:"required"`
+			AccountId   string `json:"account_id" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		//get user account from refresh list
+		//print refreshList
+		fmt.Printf("Refresh List: %v\n", *refreshList)
+		//print userID
+		fmt.Printf("User ID: %s\n", req.AccountId)
+		userAccount, ok := (*refreshList)[req.AccountId]
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User account not found"})
+			return
+		}
+
+		reqToken, _ := http.NewRequest("GET", fmt.Sprintf("https://account-public-service-prod.ol.epicgames.com/account/api/public/account/displayName/%s", req.DisplayName), nil)
+		reqToken.Header.Set("Authorization", "Bearer "+userAccount.AccessToken)
+
+		respToken, err := client.Do(reqToken)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No se encontro al usuario", "details": err.Error()})
+			return
+		}
+		defer respToken.Body.Close()
+
+		//print response
+		fmt.Printf("Response: %s\n", respToken.Status)
+
+		type publicAccountResult struct {
+			AccountId   string `json:"id"`
+			DisplayName string `json:"displayName"`
+		}
+
+		var tokenResult publicAccountResult
+		if err := json.NewDecoder(respToken.Body).Decode(&tokenResult); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No se encontro al usuario.", "details": err.Error()})
+			return
+		}
+
+		//userAccount.IDtoSTR WITHOUT -
+		userAccountIDtoSTR := strings.ReplaceAll(userAccount.ID.String(), "-", "")
+
+		//then check in friends list with id (currentuser id, then friend id)
+		// GET /friends/api/v1/aa4a645d589d41478300d8af9741f294/friends/11406cf858f042bc902bb83a53063d3e?displayAlias=true HTTP/1.1
+		// Accept: */*
+		// Accept-Encoding: deflate, gzip
+		// User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0
+		// Authorization: Bearer 65cb2fe6cf334f129faf36369949fb61
+		// Host: friends-public-service-prod.ol.epicgames.com
+		//print
+		fmt.Printf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", userAccountIDtoSTR, tokenResult.AccountId)
+		fmt.Printf("\nUser Account: %s\n", userAccount.AccessToken)
+
+		reqFriends, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", userAccountIDtoSTR, tokenResult.AccountId), nil)
+		reqFriends.Header.Set("Authorization", "Bearer "+userAccount.AccessToken)
+
+		//print request
+		fmt.Printf("Request: %s\n", reqFriends.URL)
+		fmt.Printf("Request: %s\n", reqFriends.Header)
+		//print request body
+		fmt.Printf("Request: %s\n", reqFriends.Body)
+
+		respFriends, err := client.Do(reqFriends)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "El usuario no es amigo", "details": err.Error()})
+			return
+		}
+		defer respFriends.Body.Close()
+		if respFriends.StatusCode != 200 {
+			var errorResponse struct {
+				ErrorCode    string   `json:"errorCode"`
+				ErrorMessage string   `json:"errorMessage"`
+				MessageVars  []string `json:"messageVars"`
+			}
+			//print response
+			fmt.Printf("Response: %s\n", respFriends.Status)
+			fmt.Printf("Response: %s\n", respFriends.Header)
+
+			if err := json.NewDecoder(respFriends.Body).Decode(&errorResponse); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "El usuario no es amigo.", "details": err.Error()})
+				return
+			}
+			// Check if the error code is "errors.com.epicgames.friends.friendship_not_found"
+			if respFriends.StatusCode == 404 && errorResponse.ErrorCode == "errors.com.epicgames.friends.friendship_not_found" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "El usuario no esta en la lista de amigos", "details": errorResponse.ErrorMessage})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not get client token", "details": errorResponse.ErrorMessage})
+			return
+		}
+		type FriendResult struct {
+			AccountId string `json:"accountId"`
+			Alias     string `json:"alias"`
+			Created   string `json:"created"`
+		}
+		var friendResult FriendResult
+		if err := json.NewDecoder(respFriends.Body).Decode(&friendResult); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Usuario no encontrado", "details": err.Error()})
+			return
+		}
+		//check if the account is in the friends list for more than 48 hours
+		//if friendResult.Created > 48 hours
+		friendCreated, err := time.Parse(time.RFC3339, friendResult.Created)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid friend created date", "details": err.Error()})
+			return
+		}
+		if time.Since(friendCreated) > 48*time.Hour {
+
+			//parse created to dd/mm/yyyy, hh:mm in gtm -5
+			friendCreatedStr := friendCreated.Format("02/01/2006 15:04")
+			friendCreatedStr = friendCreatedStr + " GMT-5"
+			c.JSON(http.StatusOK, gin.H{"giftable": true, "friend": true, "user": true, "accountId": tokenResult.AccountId, "displayName": tokenResult.DisplayName, "created": friendCreatedStr})
+			return
+		}
+
+	}
+}
 
 // //handle verify if access token is valid

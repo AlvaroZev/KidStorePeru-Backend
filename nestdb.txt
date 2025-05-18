@@ -40,7 +40,7 @@ CREATE TABLE game_accounts (
 -- Transactions Table
 CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    game_account_id UUID REFERENCES game_accounts(id) ON DELETE CASCADE,
+    game_account_id UUID REFERENCES game_accounts(id),
     receiver_id TEXT,
     receiver_username TEXT,
     object_store_id TEXT NOT NULL,
