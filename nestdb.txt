@@ -41,12 +41,14 @@ CREATE TABLE game_accounts (
 CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     game_account_id UUID REFERENCES game_accounts(id),
+    sender_name TEXT,
     receiver_id TEXT,
     receiver_username TEXT,
     object_store_id TEXT NOT NULL,
     object_store_name TEXT NOT NULL,
     regular_price NUMERIC NOT NULL,
     final_price NUMERIC NOT NULL,
+    gift_image TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
