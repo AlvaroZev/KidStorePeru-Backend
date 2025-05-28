@@ -246,7 +246,7 @@ func DeleteGameAccount(db *sql.DB, id uuid.UUID) error {
 
 // ========== TRANSACTION METHODS ==========
 func AddTransaction(db *sql.DB, tx Transaction) error {
-	_, err := db.Exec(`INSERT INTO transactions (id, game_account_id, sender_name, receiver_id, object_store_id, object_store_name, regular_price, final_price, gift_image, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`, tx.ID, tx.GameAccountID, tx.SenderName, tx.ReceiverID, tx.ObjectStoreID, tx.ObjectStoreName, tx.RegularPrice, tx.FinalPrice, tx.GiftImage)
+	_, err := db.Exec(`INSERT INTO transactions (id, game_account_id, sender_name, receiver_id, receiver_username, object_store_id, object_store_name, regular_price, final_price, gift_image, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())`, tx.ID, tx.GameAccountID, tx.SenderName, tx.ReceiverID, tx.ReceiverName, tx.ObjectStoreID, tx.ObjectStoreName, tx.RegularPrice, tx.FinalPrice, tx.GiftImage)
 	if err != nil {
 		fmt.Printf("Error adding transaction: %v", err)
 	}
@@ -1222,24 +1222,6 @@ func HandlerSendGift(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
 			return
 		}
 
-		userID, exists := c.Get("userID")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-
-		userIDStr, ok := userID.(string)
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
-			return
-		}
-
-		userUUID, err := uuid.Parse(userIDStr)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user UUID format", "details": err.Error()})
-			return
-		}
-
 		var req struct {
 			AccountID    string `json:"account_id" binding:"required"`
 			SenderName   string `json:"sender_username" binding:"required"`
@@ -1270,6 +1252,9 @@ func HandlerSendGift(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
 			return
 		}
 
+		//print tokens
+		fmt.Printf("Tokens for account %s: %+v\n", AccountId, tokens)
+
 		//remove - from the receiver ID and AccountID
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
@@ -1282,7 +1267,7 @@ func HandlerSendGift(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
 
 		err = AddTransaction(db, Transaction{
 			ID:              uuid.New(),
-			GameAccountID:   userUUID,
+			GameAccountID:   AccountId,
 			SenderName:      &req.SenderName, // Assuming this is the sender's account ID
 			ReceiverID:      &req.ReceiverID,
 			ReceiverName:    &req.ReceiverName,
