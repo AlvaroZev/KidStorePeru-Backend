@@ -16,33 +16,63 @@ import (
 	"github.com/google/uuid"
 )
 
-func HandlerUpdatePavosBulk(db *sql.DB, refreshList *types.RefreshList) gin.HandlerFunc {
+func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		result := utils.ProtectedEndpointHandler(c)
 		if result != 200 {
 			return
 		}
 
-		for accountID, Tokens := range *refreshList {
+		var gameAccounts []types.GameAccount
+		var err error
 
-			//get the pavos from the account
-			pavos, err := GetAccountPavos(Tokens.AccessToken)
+		//get all game accounts for the user
+		if !admin {
+			//get user ID from context
+			gameAccounts, err = database.GetGameAccountByOwner(db, userID)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Could not get PaVos for account %s: %s", accountID, err.Error())})
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch game accounts", "details": err.Error()})
 				return
 			}
 
-			//update the pavos in the database
-			err = database.UpdatePaVos(db, accountID, pavos)
+		} else {
+			//get all game accounts
+			gameAccounts, err = database.GetAllGameAccounts(db)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Could not update PaVos for account %s: %s", accountID, err.Error())})
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch game accounts", "details": err.Error()})
 				return
 			}
-			fmt.Printf("Updated PaVos for account %s: %d\n", accountID, pavos)
 
 		}
 
+		for _, account := range gameAccounts {
+			_, err := UpdatePavosGameAccount(db, account.ID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   fmt.Sprintf("Could not update PaVos for account %s: %s", account.ID, err.Error()),
+				})
+				continue
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+
 	}
+}
+
+func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
+	pavos, err := GetAccountPavos(db, accountID)
+	if err != nil {
+		return 0, fmt.Errorf("could not get PaVos for account %s: %w", accountID, err)
+	}
+
+	//update the pavos in the database
+	err = database.UpdatePaVos(db, accountID, pavos)
+	if err != nil {
+		return 0, fmt.Errorf("could not update PaVos for account %s: %w", accountID, err)
+	}
+
+	return pavos, nil
 }
 
 // func HandlerUpdatePavosBulk(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
@@ -97,46 +127,25 @@ func HandlerUpdatePavosBulk(db *sql.DB, refreshList *types.RefreshList) gin.Hand
 // 	}
 // }
 
-func GetAccountPavos(acces_token string) (int, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
-
+func GetAccountPavos(db *sql.DB, AccountID uuid.UUID) (int, error) {
 	req, err := http.NewRequest("GET", "https://www.epicgames.com/account/v2/api/wallet/fortnite", nil)
 	if err != nil {
 		return 0, fmt.Errorf("could not create request: %w", err)
 	}
 	//set cookieEPIC_BEARER_TOKEN=acces_token
-	req.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", acces_token))
 	req.Header.Set("User-Agent", "EpicGamesLauncher/14.6.2-14746003+++Portal+Release-Live Windows/10.0.19044.1.256.64bit")
 	req.Header.Set("Accept", "application/json")
-	//print request for debugging
-	fmt.Println("Request URL:", req.URL.String())
-	fmt.Println("Request Headers:", req.Header)
 
-	resp, err := client.Do(req)
+	resp, err := ExecuteOperationWithRefresh(req, db, AccountID, "pavos")
 	if err != nil {
 		return 0, fmt.Errorf("could not send request: %w", err)
 	}
+
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-	var response struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Wallet struct {
-				Purchased []struct {
-					Type   string `json:"type"`
-					Values struct {
-						Shared  int `json:"Shared"`
-						Switch  int `json:"Switch"`
-						PCKorea int `json:"PCKorea"`
-					} `json:"values"`
-				} `json:"purchased"`
-				Earned int `json:"earned"`
-			} `json:"wallet"`
-			LastUpdated string `json:"lastUpdated"`
-		} `json:"data"`
-	}
+	var response types.PavosResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return 0, fmt.Errorf("could not decode response: %w", err)
 	}
@@ -159,64 +168,44 @@ func GetAccountPavos(acces_token string) (int, error) {
 }
 
 // endpoint handler to send gift
-func HandlerSendGift(db *sql.DB, refreshList *types.RefreshList) gin.HandlerFunc {
+func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		result := utils.ProtectedEndpointHandler(c)
 		if result != 200 {
 			return
 		}
 
-		var req struct {
-			AccountID    string `json:"account_id" binding:"required"`
-			SenderName   string `json:"sender_username" binding:"required"`
-			ReceiverID   string `json:"receiver_id" binding:"required"`
-			ReceiverName string `json:"receiver_username" binding:"required"`
-			GiftId       string `json:"gift_id" binding:"required"`
-			GiftPrice    int    `json:"gift_price" binding:"required"`
-			GiftName     string `json:"gift_name" binding:"required"`
-			Message      string `json:"message" binding:"required"`
-			GiftImage    string `json:"gift_image" binding:"required"`
-		}
+		var req types.GiftRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 			return
 		}
 
 		AccountId, err := uuid.Parse(req.AccountID)
 		if err != nil {
 			fmt.Printf("Failed to parse game ID: %v", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid account ID format", "details": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid account ID format", "details": err.Error()})
 			return
 		}
 
 		//check if account has enough gifts
 		remainingGifts, err := database.GetRemainingGifts(db, AccountId)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch remaining gifts", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch remaining gifts", "details": err.Error()})
 			return
 		}
 		if remainingGifts <= 0 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "You have no gifts left to send"})
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "You have no gifts left to send"})
 			return
 		}
-
-		//fetch access token from refresh list
-		tokens, ok := (*refreshList)[AccountId]
-		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Account not found in refresh list"})
-			return
-		}
-
-		//print tokens
-		fmt.Printf("Tokens for account %s: %+v\n", AccountId, tokens)
 
 		//remove - from the receiver ID and AccountID
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
 
-		err = sendGiftRequest(req.AccountID, req.ReceiverID, req.GiftId, req.GiftPrice, tokens.AccessToken)
+		err = sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not send gift", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not send gift", "details": err.Error()})
 			return
 		}
 
@@ -234,31 +223,30 @@ func HandlerSendGift(db *sql.DB, refreshList *types.RefreshList) gin.HandlerFunc
 			CreatedAt:       time.Now(),
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not add transaction", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not add transaction", "details": err.Error()})
 			return
 		}
 
-		//update the sender's PaVos
-		err = SmartUpdatePavos(db, AccountId, -req.GiftPrice) // Decrease by the gift price
+		//update the sender's PaVos with func UpdatePavosGameAccount
+		_, err = UpdatePavosGameAccount(db, AccountId)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update sender's PaVos", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update PaVos after sending gift", "details": err.Error()})
 			return
 		}
 
 		// Update the sender's remaining gifts
 		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1) // Decrease by 1
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not update remaining gifts", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update remaining gifts", "details": err.Error()})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"message": "Gift sent successfully"})
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Gift sent successfully"})
 
 	}
 }
 
-func sendGiftRequest(accountID string, userID string, giftItem string, giftPrice int, accessToken string) error {
-	client := &http.Client{Timeout: 10 * time.Second}
+func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int) error {
 
 	payload := map[string]interface{}{
 		"offerId":            giftItem,
@@ -266,7 +254,7 @@ func sendGiftRequest(accountID string, userID string, giftItem string, giftPrice
 		"currencySubType":    "",
 		"expectedTotalPrice": giftPrice,
 		"gameContext":        "Frontend.CatabaScreen",
-		"receiverAccountIds": []string{userID},
+		"receiverAccountIds": []string{receiverUserID},
 		"giftWrapTemplateId": "",
 		"personalMessage":    "",
 	}
@@ -276,15 +264,14 @@ func sendGiftRequest(accountID string, userID string, giftItem string, giftPrice
 		return err
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/%s/client/GiftCatalogEntry?profileId=common_core", accountID),
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/%s/client/GiftCatalogEntry?profileId=common_core", accountIDStr),
 		bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := client.Do(req)
+	resp, err := ExecuteOperationWithRefresh(req, db, accountID, "")
 	if err != nil {
 		return err
 	}
@@ -294,8 +281,8 @@ func sendGiftRequest(accountID string, userID string, giftItem string, giftPrice
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response: %s\n", resp.Proto)
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("failed to send gift, status: %d", resp.StatusCode)
+	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 && resp.StatusCode != 203 && resp.StatusCode != 204 {
+		return fmt.Errorf("failed to send gift, status code: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -348,31 +335,6 @@ func SmartUpdatePavos(db *sql.DB, accountID uuid.UUID, pavos int) error {
 
 // Handle Authorization_Code login  (input authorization code) output:
 //raw example
-
-// ============================ FORTNITE ACCOUNT HANDLERS ============================
-func HandlerDisconnectFAccount(db *sql.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		result := utils.ProtectedEndpointHandler(c)
-		if result != 200 {
-			return
-		}
-
-		var req struct {
-			Id string `json:"id" binding:"required"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		err := database.DeleteGameAccountByID(db, uuid.MustParse(req.Id))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not disconnect Fortnite account", "details": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Fortnite account disconnected successfully"})
-	}
-}
 
 func UpdateRemainingGiftsInAccounts(db *sql.DB) error {
 	//sleep for 15 minutes

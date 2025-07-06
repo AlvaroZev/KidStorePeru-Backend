@@ -14,14 +14,14 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Read the Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header missing"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Authorization header missing"})
 			return
 		}
 
 		// Should be "Bearer <token>"
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Authorization header format must be Bearer {token}"})
 			return
 		}
 
@@ -38,14 +38,14 @@ func AuthMiddleware() gin.HandlerFunc {
 		})
 
 		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token", "details": err.Error()})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Invalid token", "details": err.Error()})
 			return
 		}
 
 		// Extract userID from claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok || claims["user_id"] == nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Invalid token claims"})
 			return
 		}
 
@@ -74,7 +74,7 @@ func AdminProtectedEndpointHandler(c *gin.Context) int {
 
 	err := VerifyToken(c.Request.Header.Get("Authorization")[len("Bearer "):])
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token", "details": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Invalid token", "details": err.Error()})
 		return 401
 	}
 	return 200 // 200 OK
@@ -83,29 +83,45 @@ func AdminProtectedEndpointHandler(c *gin.Context) int {
 func ProtectedEndpointHandler(c *gin.Context) int {
 	err := VerifyToken(c.Request.Header.Get("Authorization")[len("Bearer "):])
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token", "details": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "Invalid token", "details": err.Error()})
 		return 401
 	}
 	return 200 // 200 OK
 }
 
-func ProtectedHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	tokenString := r.Header.Get("Authorization")
+func IsTokenAdmin(c *gin.Context) bool {
+	tokenString := c.Request.Header.Get("Authorization")
 	if tokenString == "" {
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, "Missing authorization header")
-		return
+		return false
 	}
+
 	tokenString = tokenString[len("Bearer "):]
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return secretKey, nil
+	})
 
-	err := VerifyToken(tokenString)
-	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, "Invalid token", err.Error())
+	if err != nil || !token.Valid {
+		return false
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || claims["admin"] == nil {
+		return false
+	}
+
+	return claims["admin"].(bool)
+}
+
+func ProtectedHandler(c *gin.Context) {
+	// This handler is protected by the AuthMiddleware
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "User ID not found in context"})
 		return
 	}
 
-	fmt.Fprint(w, "Welcome to the the protected area")
+	// You can use userID for further processing
+	fmt.Println("Protected handler accessed by user:", userID)
 
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Welcome to the protected area", "userID": userID})
 }

@@ -1,12 +1,13 @@
 package utils
 
 import (
-	"KidStoreBotBE/src/types"
-	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
+	"github.com/google/uuid"
 )
 
 var secretKey = []byte("secret-key")
@@ -72,32 +73,30 @@ func VerifyToken(tokenString string) error {
 	return nil
 }
 
-func NestTokensInRefreshList(db *sql.DB, refreshList *types.RefreshList) {
-	// Get all game accounts from the database
-	rows, err := db.Query(`SELECT id, access_token, access_token_exp_date, refresh_token FROM game_accounts`)
+func GetUserIdFromToken(c *gin.Context) (string, uuid.UUID, error) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		return "", uuid.Nil, fmt.Errorf("no autorizado")
+
+	}
+
+	userIDStrTemp, ok := userID.(string)
+	if !ok {
+		return "", uuid.Nil, fmt.Errorf("id de usuario inválido")
+
+	}
+	userIDStr := strings.ReplaceAll(userIDStrTemp, "-", "")
+
+	userUUID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		fmt.Printf("Error fetching game accounts: %v", err)
-		return
+		return "", uuid.Nil, fmt.Errorf("formato de UUID de usuario inválido: %v", err)
 	}
-	defer rows.Close()
+	return userIDStr, userUUID, nil
+}
 
-	for rows.Next() {
-		var account types.AccountTokens
-		if err := rows.Scan(&account.ID, &account.AccessToken, &account.AccessTokenExp, &account.RefreshToken); err != nil {
-			fmt.Printf("Error scanning game account: %v", err)
-			continue
-		}
-		//convert account.ID to string
-		accountId := account.ID.String()
-
-		//print accountId and account.ID
-		fmt.Printf("Account ID: %s, Account ID (UUID): %s\n", accountId, account.ID.String())
-		(*refreshList)[account.ID] = types.AccountTokens{
-			ID:             account.ID,
-			AccessToken:    account.AccessToken,
-			RefreshToken:   account.RefreshToken,
-			AccessTokenExp: account.AccessTokenExp,
-		}
-
+func ConvertUUIDToString(uuidValue uuid.UUID) (string, error) {
+	if uuidValue == uuid.Nil {
+		return "", fmt.Errorf("UUID is nil")
 	}
+	return strings.ReplaceAll(uuidValue.String(), "-", ""), nil
 }

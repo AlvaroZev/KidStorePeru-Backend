@@ -6,16 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type AccountsToConnect struct {
-	User_id     uuid.UUID `json:"user_id"`
-	Device_code string    `json:"device_code"`
-}
-
-type Login struct {
-	User     string `form:"user" json:"user" xml:"user" binding:"required"`
-	Password string `form:"password" json:"password" xml:"password" binding:"required"`
-}
-
+// General backend
 type EnvConfigType struct {
 	Host                   string `envconfig:"DB_HOST" default:"postgres.railway.internal"`
 	Port                   int    `envconfig:"DB_PORT" default:"5432"`
@@ -27,12 +18,17 @@ type EnvConfigType struct {
 	AdminPass              string `envconfig:"ADMIN_PASS"`
 	AcceptFriendsInMinutes int    `envconfig:"ACCEPT_FRIENDS_IN_MINUTES" default:"5"`
 	RefreshTokensInMinutes int    `envconfig:"REFRESH_TOKENS_IN_MINUTES" default:"13"`
+	Epic_client            string `envconfig:"EPIC_CLIENT" default:""`
+	Epic_secret            string `envconfig:"EPIC_SECRET" default:""`
 }
 
+// Fortnite API Login
+// response from client credentials grant
 type AccessTokenResult struct {
 	AccessToken string `json:"access_token"`
 }
 
+// response from deviceAuthorization
 type DeviceResultResponse struct {
 	DeviceCode              string `json:"device_code"`
 	UserCode                string `json:"user_code"`
@@ -40,6 +36,12 @@ type DeviceResultResponse struct {
 	Expires_in              int    `json:"expires_in"`
 }
 
+// request from page for device code grant
+type DeviceCodeRequest struct {
+	DeviceCode string `json:"device_code"`
+}
+
+// response from device code grant
 type LoginResultResponse struct {
 	AccessToken                string `json:"access_token"`
 	AccessTokenExpiration      int    `json:"expires_in"`
@@ -52,10 +54,34 @@ type LoginResultResponse struct {
 	InAppId                    string `json:"in_app_id"`
 }
 
-type accountIdStr struct {
-	AccountId string
+// response from Account Device secrets grant
+type DeviceSecretsResponse struct {
+	DeviceId  string `json:"deviceId"`
+	AccountId string `json:"accountId"`
+	Secret    string `json:"secret"`
 }
 
+// Fortnite Account
+
+type PavosResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Wallet struct {
+			Purchased []struct {
+				Type   string `json:"type"`
+				Values struct {
+					Shared  int `json:"Shared"`
+					Switch  int `json:"Switch"`
+					PCKorea int `json:"PCKorea"`
+				} `json:"values"`
+			} `json:"purchased"`
+			Earned int `json:"earned"`
+		} `json:"wallet"`
+		LastUpdated string `json:"lastUpdated"`
+	} `json:"data"`
+}
+
+// DB models
 type User struct {
 	ID        uuid.UUID
 	Username  string
@@ -64,7 +90,6 @@ type User struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
-
 type GameAccount struct {
 	ID                  uuid.UUID
 	DisplayName         string
@@ -79,6 +104,13 @@ type GameAccount struct {
 	OwnerUserID         uuid.UUID
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+type GameAccountSecrets struct {
+	Owner_user_id uuid.UUID
+	DeviceId      string
+	AccountId     string
+	Secret        string
 }
 
 type Transaction struct {
@@ -122,6 +154,11 @@ type SimplifiedAccount struct {
 	RemainingGifts int    `json:"remainingGifts"`
 }
 
+type GameFriendRequest struct {
+	DisplayName string `json:"display_name" binding:"required"`
+	AccountId   string `json:"account_id" binding:"required"`
+}
+
 type PublicAccountResult struct {
 	AccountId   string `json:"id"`
 	DisplayName string `json:"displayName"`
@@ -131,4 +168,34 @@ type FriendResult struct {
 	AccountId string `json:"accountId"`
 	Alias     string `json:"alias"`
 	Created   string `json:"created"`
+}
+
+// Page
+type AccountsToConnect struct {
+	User_id     uuid.UUID `json:"user_id"`
+	Device_code string    `json:"device_code"`
+}
+
+type Login struct {
+	User     string `form:"user" json:"user" xml:"user" binding:"required"`
+	Password string `form:"password" json:"password" xml:"password" binding:"required"`
+}
+type GiftRequest struct {
+	AccountID    string `json:"account_id" binding:"required"`
+	SenderName   string `json:"sender_username" binding:"required"`
+	ReceiverID   string `json:"receiver_id" binding:"required"`
+	ReceiverName string `json:"receiver_username" binding:"required"`
+	GiftId       string `json:"gift_id" binding:"required"`
+	GiftPrice    int    `json:"gift_price" binding:"required"`
+	GiftName     string `json:"gift_name" binding:"required"`
+	Message      string `json:"message" binding:"required"`
+	GiftImage    string `json:"gift_image" binding:"required"`
+}
+
+// Other types
+type AuthorizationCode struct {
+	Code string `json:"code"`
+}
+type AccountIdStr struct {
+	AccountId string
 }

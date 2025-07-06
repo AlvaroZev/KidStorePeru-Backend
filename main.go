@@ -49,9 +49,6 @@ func main() {
 		panic(err)
 	}
 
-	var refreshTokenList types.RefreshList = make(types.RefreshList)
-	var list_ofPendingRequests []types.AccountsToConnect = make([]types.AccountsToConnect, 0)
-
 	router := gin.Default()
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
@@ -88,19 +85,29 @@ func main() {
 		c.String(http.StatusOK, "Welcome Gin Server")
 	})
 
-	authorized.GET("/protected", func(ctx *gin.Context) {
-		result := utils.ProtectedEndpointHandler(ctx)
+	authorized.GET("/protected", func(c *gin.Context) {
+		result := utils.ProtectedEndpointHandler(c)
 		if result != 200 {
 			return
 		}
+		//Get user from db
+		_, dUserID, err := utils.GetUserIdFromToken(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": err})
+		}
+		IsTokenAdmin := utils.IsTokenAdmin(c)
+		if IsTokenAdmin {
+			fortnite.UpdatePavosForUser(db, dUserID, true)
+		} else {
+			fortnite.UpdatePavosForUser(db, dUserID, false)
+		}
 
 		// If the token is valid, proceed with the request to refresh pavos
-		fortnite.HandlerUpdatePavosBulk(db, &refreshTokenList)
-		ctx.JSON(http.StatusOK, gin.H{"message": "Welcome to the protected area"})
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Welcome to the protected area"})
 	})
 
 	//login endpoint
-	router.POST("/loginform", page.HandlerLoginForm(db, cfg.AdminUser, &refreshTokenList))
+	router.POST("/loginform", page.HandlerLoginForm(db, cfg.AdminUser))
 
 	//user endpoints
 	authorized.POST("/addnewuser", page.HandlerAddNewUser(db))
@@ -111,25 +118,22 @@ func main() {
 	authorized.GET("/allfortniteaccounts", page.HandlerGetAllGameAccounts(db))
 
 	//fortnite account endpoints
+	authorized.POST("/connectfaccount", fortnite.HandlerConnectFortniteAccount(db))
+	authorized.POST("/finishconnectfaccount", fortnite.HandlerFinishConnectFortniteAccount(db))
+
 	authorized.POST("/disconnectfortniteaccount", fortnite.HandlerDisconnectFAccount(db))
 	//authorized.GET("/faccountstate", fortnite.HandlerGetFAccountState(db))
-	authorized.POST("/connectfaccount", fortnite.HandlerAuthorizationCodeLogin(db, &refreshTokenList))
-	authorized.POST("/sendGift", fortnite.HandlerSendGift(db, &refreshTokenList))
-	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db, &refreshTokenList))
-	authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosBulk(db, &refreshTokenList))
+	//authorized.POST("/connectfaccount", fortnite.HandlerAuthorizationCodeLogin(db, &refreshTokenList))
+	authorized.POST("/sendGift", fortnite.HandlerSendGift(db))
+	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db))
+	//authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosBulk(db))
 	//fetch transactions
-	authorized.GET("/transactions", page.HandlerGetTransactions(db))
-	//common
-	utils.NestTokensInRefreshList(db, &refreshTokenList)
+	authorized.GET("/transactions", page.HandlerGetTransactionsByAccount(db))
+	authorized.GET("/alltransactions", page.HandlerGetTransactionsAdmin(db))
 
-	//temp
-	authorized.POST("/forcerefresh", fortnite.HandlerRefreshToken(db, &refreshTokenList))
-	authorized.POST("/connectfortniteaccount", fortnite.HandlerConnectFAccount(db, &list_ofPendingRequests))
-
-	//go StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes, &refreshTokenList) // Check every 5 minutes
-	go fortnite.StartTokenRefresher(db, &refreshTokenList)            // Check every 10 minutes
-	go fortnite.UpdateRemainingGiftsInAccounts(db)                    // Check every 15 minutes
-	go fortnite.UpdateTokensPeriodically(db, &list_ofPendingRequests) // Check every 5 minutes
+	go fortnite.StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes) // Check every 5 minutes
+	//go fortnite.StartTokenRefresher(db)                                   // Check every 10 minutes
+	go fortnite.UpdateRemainingGiftsInAccounts(db) // Check every 15 minutes
 
 	router.Run(":8080")
 }

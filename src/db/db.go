@@ -2,6 +2,7 @@ package db
 
 import (
 	"KidStoreBotBE/src/types"
+	"KidStoreBotBE/src/utils"
 	"database/sql"
 	"fmt"
 
@@ -81,8 +82,39 @@ func DeleteGameAccountByUsername(db *sql.DB, username string, ownerID uuid.UUID)
 }
 
 func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
-	_, err := db.Exec(`DELETE FROM game_accounts WHERE id = $1`, id)
+	//delete game account secrets first
+
+	//remove - from id
+	idStr, _ := utils.ConvertUUIDToString(id)
+
+	_, err := db.Exec(`DELETE FROM secrets WHERE account_id = $1`, idStr)
+	if err != nil {
+		fmt.Printf("Error deleting game account secrets: %v", err)
+	}
+
+	_, err = db.Exec(`DELETE FROM game_accounts WHERE id = $1`, id)
+	if err != nil {
+		fmt.Printf("Error deleting game account: %v", err)
+	}
 	return err
+}
+
+func AddGameAccountSecrets(db *sql.DB, secrets types.GameAccountSecrets) error {
+	_, err := db.Exec(`INSERT INTO secrets (owner_user_id, device_id, account_id, secret) VALUES ($1, $2, $3, $4)`, secrets.Owner_user_id, secrets.DeviceId, secrets.AccountId, secrets.Secret)
+	if err != nil {
+		fmt.Printf("Error adding game account secrets: %v", err)
+	}
+	return err
+}
+
+func GetGameAccountSecrets(db *sql.DB, accountId string) (types.GameAccountSecrets, error) {
+	var secrets types.GameAccountSecrets
+	err := db.QueryRow(`SELECT  owner_user_id, device_id, account_id, secret FROM secrets WHERE account_id = $1`, accountId).Scan(&secrets.Owner_user_id, &secrets.DeviceId, &secrets.AccountId, &secrets.Secret)
+	if err != nil {
+		fmt.Printf("Error getting game account secrets: %v", err)
+		return types.GameAccountSecrets{}, err
+	}
+	return secrets, nil
 }
 
 // get (only) the ids and refresh tokens of all game accounts in the db
@@ -106,15 +138,64 @@ func DeleteGameAccountByID(db *sql.DB, id uuid.UUID) error {
 // 	return accounts, nil
 // }
 
-func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) (types.GameAccount, error) {
-	var account types.GameAccount
-	err := db.QueryRow(`SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE owner_user_id = $1`, ownerID).Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate)
+func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) ([]types.GameAccount, error) {
+	query := `SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts WHERE owner_user_id = $1`
+	rows, err := db.Query(query, ownerID)
 	if err != nil {
-		fmt.Printf("Error getting game account: %v", err)
-		return types.GameAccount{}, err
+		return nil, err
 	}
-	return account, nil
+	defer rows.Close()
 
+	var accounts []types.GameAccount
+	for rows.Next() {
+		var account types.GameAccount
+		if err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+func GetGameAccountsByOwnerLimited(db *sql.DB, ownerUserID uuid.UUID) ([]types.GameAccount, error) {
+	query := `SELECT id, display_name, remaining_gifts, access_token, refresh_token, created_at, updated_at FROM game_accounts WHERE owner_user_id = $1`
+	rows, err := db.Query(query, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+
+	defer rows.Close()
+
+	var accounts []types.GameAccount
+	for rows.Next() {
+		var account types.GameAccount
+
+		err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.AccessToken, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
+}
+
+func GetAllGameAccounts(db *sql.DB) ([]types.GameAccount, error) {
+	var accounts []types.GameAccount
+	rows, err := db.Query(`SELECT id, display_name, remaining_gifts, pavos, access_token, access_token_exp, access_token_exp_date, refresh_token, refresh_token_exp, refresh_token_exp_date FROM game_accounts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var account types.GameAccount
+		if err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.AccessTokenExp, &account.AccessTokenExpDate, &account.RefreshToken, &account.RefreshTokenExp, &account.RefreshTokenExpDate); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, nil
 }
 
 func GetGameAccount(db *sql.DB, id uuid.UUID) (types.GameAccount, error) {
@@ -127,13 +208,84 @@ func GetGameAccount(db *sql.DB, id uuid.UUID) (types.GameAccount, error) {
 	return account, nil
 }
 
-func UpdateGameAccount(db *sql.DB, account types.GameAccount) error {
-	_, err := db.Exec(`UPDATE game_accounts SET display_name = $1, remaining_gifts = $2, pavos = $3, access_token = $4, access_token_exp = $5, access_token_exp_date = $6, refresh_token = $7, refresh_token_exp = $8, refresh_token_exp_date = $9 WHERE id = $10`, account.DisplayName, account.RemainingGifts, account.PaVos, account.AccessToken, account.AccessTokenExp, account.AccessTokenExpDate, account.RefreshToken, account.RefreshTokenExp, account.RefreshTokenExpDate, account.ID)
-	return err
+func GetAllGameAccountsIds(db *sql.DB) ([]uuid.UUID, error) {
+	var ids []uuid.UUID
+	rows, err := db.Query(`SELECT id FROM game_accounts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
-func DeleteGameAccount(db *sql.DB, id uuid.UUID) error {
-	_, err := db.Exec(`DELETE FROM game_accounts WHERE id = $1`, id)
+func UpdateGameAccount(db *sql.DB, account types.GameAccount) error {
+	query := "UPDATE game_accounts SET "
+	params := []interface{}{}
+	paramCounter := 1
+
+	if account.DisplayName != "" {
+		query += fmt.Sprintf("display_name = $%d, ", paramCounter)
+		params = append(params, account.DisplayName)
+		paramCounter++
+	}
+	if account.RemainingGifts != 0 {
+		query += fmt.Sprintf("remaining_gifts = $%d, ", paramCounter)
+		params = append(params, account.RemainingGifts)
+		paramCounter++
+	}
+	if account.PaVos != 0 {
+		query += fmt.Sprintf("pavos = $%d, ", paramCounter)
+		params = append(params, account.PaVos)
+		paramCounter++
+	}
+	if account.AccessToken != "" {
+		query += fmt.Sprintf("access_token = $%d, ", paramCounter)
+		params = append(params, account.AccessToken)
+		paramCounter++
+	}
+	if account.AccessTokenExp != 0 {
+		query += fmt.Sprintf("access_token_exp = $%d, ", paramCounter)
+		params = append(params, account.AccessTokenExp)
+		paramCounter++
+	}
+	if !account.AccessTokenExpDate.IsZero() {
+		query += fmt.Sprintf("access_token_exp_date = $%d, ", paramCounter)
+		params = append(params, account.AccessTokenExpDate)
+		paramCounter++
+	}
+	if account.RefreshToken != "" {
+		query += fmt.Sprintf("refresh_token = $%d, ", paramCounter)
+		params = append(params, account.RefreshToken)
+		paramCounter++
+	}
+	if account.RefreshTokenExp != 0 {
+		query += fmt.Sprintf("refresh_token_exp = $%d, ", paramCounter)
+		params = append(params, account.RefreshTokenExp)
+		paramCounter++
+	}
+	if !account.RefreshTokenExpDate.IsZero() {
+		query += fmt.Sprintf("refresh_token_exp_date = $%d, ", paramCounter)
+		params = append(params, account.RefreshTokenExpDate)
+		paramCounter++
+	}
+
+	if len(params) == 0 {
+		return nil // nothing to update
+	}
+
+	query = query[:len(query)-2] // remove last comma and space
+	query += fmt.Sprintf(" WHERE id = $%d", paramCounter)
+	params = append(params, account.ID)
+
+	_, err := db.Exec(query, params...)
 	return err
 }
 
@@ -228,24 +380,6 @@ func UpdatePaVos(db *sql.DB, accountID uuid.UUID, pavos int) error {
 		fmt.Printf("Error updating PaVos: %v", err)
 	}
 	return err
-}
-
-func GetAllGameAccountsIds(db *sql.DB) ([]uuid.UUID, error) {
-	var ids []uuid.UUID
-	rows, err := db.Query(`SELECT id FROM game_accounts`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
 }
 
 func GetTransactions(db *sql.DB) ([]types.Transaction, error) {
