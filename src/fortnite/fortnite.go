@@ -195,7 +195,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		if remainingGifts <= 0 {
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "You have no gifts left to send"})
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "You have no gifts left to send", "remainingGifts": remainingGifts})
 			return
 		}
 
@@ -203,7 +203,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
 
-		err = sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice)
+		err = sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice, &req.SenderName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not send gift", "details": err.Error()})
 			return
@@ -246,7 +246,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int) error {
+func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int, senderName *string) error {
 
 	payload := map[string]interface{}{
 		"offerId":            giftItem,
@@ -280,6 +280,48 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 	//print response
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response: %s\n", resp.Proto)
+
+	//no remaning gifts response
+	// {
+	//     "errorCode": "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed",
+	//     "errorMessage": "Could not purchase catalog offer [VIRTUAL]1 x Bulletproof for 200 MtxCurrency, item AthenaDance:eid_assassinvest x 1 (exceeding the limit of 0)",
+	//     "messageVars": ["[VIRTUAL]1 x Bulletproof for 200 MtxCurrency", "AthenaDance:eid_assassinvest", "1", "0"],
+	//     "numericErrorCode": 28004,
+	//     "originatingService": "fortnite",
+	//     "intent": "prod-live"
+	// }
+
+	// Check if the response status code indicates no remaining gifts, check for errorCode in the response body
+	var errorResponse map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
+		return fmt.Errorf("could not decode response: %s", err)
+	}
+	if errorCode, ok := errorResponse["errorCode"].(string); ok && errorCode == "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed" {
+		//set the remaining gifts to 0 in the database
+		err = database.UpdateRemainingGifts(db, accountID, 0)
+		if err != nil {
+			return fmt.Errorf("could not update remaining gifts in database: %s", err)
+		}
+
+		//add 5 external transactions to the database (not made within this system), this will help reset the remaining gifts count to 5 after 24 hours.
+		for range 5 {
+			err = database.AddTransaction(db, types.Transaction{
+				ID:              uuid.New(),
+				GameAccountID:   accountID,
+				SenderName:      senderName,
+				ReceiverID:      &receiverUserID,
+				ReceiverName:    nil, // No receiver name for external transactions
+				ObjectStoreID:   giftItem,
+				ObjectStoreName: "External Gift",
+				RegularPrice:    float64(giftPrice),
+				FinalPrice:      float64(giftPrice),
+				GiftImage:       "", // No image for external transactions
+				CreatedAt:       time.Now(),
+			})
+		}
+		// Return an error indicating no remaining gifts
+		return fmt.Errorf("no remaining gifts available: %s", errorResponse["errorMessage"])
+	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 && resp.StatusCode != 203 && resp.StatusCode != 204 {
 		return fmt.Errorf("failed to send gift, status code: %d", resp.StatusCode)
