@@ -181,6 +181,8 @@ func HandlerUpdateUser(db *sql.DB) gin.HandlerFunc {
 		setParts = append(setParts, fmt.Sprintf("updated_at = $%d", argIdx))
 		args = append(args, time.Now())
 		query := fmt.Sprintf(`UPDATE users SET %s WHERE id = $%d`, strings.Join(setParts, ", "), argIdx+1)
+		//print query
+		fmt.Println("Executing query:", query)
 		args = append(args, id)
 		_, err = db.Exec(query, args...)
 		if err != nil {

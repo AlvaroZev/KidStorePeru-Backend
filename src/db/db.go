@@ -158,7 +158,7 @@ func GetGameAccountByOwner(db *sql.DB, ownerID uuid.UUID) ([]types.GameAccount, 
 }
 
 func GetGameAccountsByOwnerLimited(db *sql.DB, ownerUserID uuid.UUID) ([]types.GameAccount, error) {
-	query := `SELECT id, display_name, remaining_gifts, access_token, refresh_token, created_at, updated_at FROM game_accounts WHERE owner_user_id = $1`
+	query := `SELECT id, display_name, remaining_gifts, pavos, access_token, refresh_token, created_at, updated_at FROM game_accounts WHERE owner_user_id = $1`
 	rows, err := db.Query(query, ownerUserID)
 	if err != nil {
 		return nil, err
@@ -170,7 +170,7 @@ func GetGameAccountsByOwnerLimited(db *sql.DB, ownerUserID uuid.UUID) ([]types.G
 	for rows.Next() {
 		var account types.GameAccount
 
-		err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.AccessToken, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt)
+		err := rows.Scan(&account.ID, &account.DisplayName, &account.RemainingGifts, &account.PaVos, &account.AccessToken, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}

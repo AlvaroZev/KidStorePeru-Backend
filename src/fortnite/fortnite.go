@@ -16,7 +16,41 @@ import (
 	"github.com/google/uuid"
 )
 
-func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.HandlerFunc {
+func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) {
+
+	var gameAccounts []types.GameAccount
+	var err error
+
+	//get all game accounts for the user
+	if !admin {
+		//get user ID from context
+		gameAccounts, err = database.GetGameAccountByOwner(db, userID)
+		if err != nil {
+			fmt.Printf("Could not fetch game accounts for user %s: %s\n", userID, err.Error())
+			return
+		}
+
+	} else {
+		//get all game accounts
+		gameAccounts, err = database.GetAllGameAccounts(db)
+		if err != nil {
+			fmt.Printf("Could not fetch all game accounts: %s\n", err.Error())
+			return
+		}
+
+	}
+
+	for _, account := range gameAccounts {
+		_, err := UpdatePavosGameAccount(db, account.ID)
+		if err != nil {
+			fmt.Printf("Could not update PaVos for account %s: %s\n", account.ID, err.Error())
+			continue
+		}
+	}
+
+}
+
+func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		result := utils.ProtectedEndpointHandler(c)
 		if result != 200 {
@@ -63,15 +97,17 @@ func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.HandlerFun
 func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
 	pavos, err := GetAccountPavos(db, accountID)
 	if err != nil {
+		fmt.Printf("Could not get PaVos for account %s: %s\n", accountID, err.Error())
 		return 0, fmt.Errorf("could not get PaVos for account %s: %w", accountID, err)
 	}
 
 	//update the pavos in the database
 	err = database.UpdatePaVos(db, accountID, pavos)
 	if err != nil {
+		fmt.Printf("Could not update PaVos for account %s: %s\n", accountID, err.Error())
 		return 0, fmt.Errorf("could not update PaVos for account %s: %w", accountID, err)
 	}
-
+	fmt.Printf("Updated PaVos for account %s: %d\n", accountID, pavos)
 	return pavos, nil
 }
 

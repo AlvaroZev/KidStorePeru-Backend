@@ -164,6 +164,8 @@ func HandlerFinishConnectFortniteAccount(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
+		//PRINT ALL DEVICE SECRETS
+		//fmt.Println("Device Secrets Status Code:", respSecrets.StatusCode)
 		//parse the device secrets
 		var deviceSecretsParsed = types.GameAccountSecrets{
 			DeviceId:  deviceSecrets.DeviceId,
@@ -208,6 +210,21 @@ func HandlerFinishConnectFortniteAccount(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
+		// Save device secrets in the database
+		err = database.AddGameAccountSecrets(db, types.GameAccountSecrets{
+			Owner_user_id: userIdUUID,
+			DeviceId:      deviceSecrets.DeviceId,
+			AccountId:     deviceSecrets.AccountId,
+			Secret:        deviceSecrets.Secret,
+		})
+		if err != nil {
+			fmt.Println("Error saving game account secrets:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not save game account secrets", "details": err.Error()})
+			// delete the game account if we can't save the secrets
+			_ = database.DeleteGameAccountByID(db, AccountID)
+			return
+		}
+
 		//get account pavos
 		pavos, err := GetAccountPavos(db, AccountID)
 		if err != nil {
@@ -228,21 +245,6 @@ func HandlerFinishConnectFortniteAccount(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		// Save device secrets in the database
-		err = database.AddGameAccountSecrets(db, types.GameAccountSecrets{
-			Owner_user_id: userIdUUID,
-			DeviceId:      deviceSecrets.DeviceId,
-			AccountId:     deviceSecrets.AccountId,
-			Secret:        deviceSecrets.Secret,
-		})
-		if err != nil {
-			fmt.Println("Error saving game account secrets:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not save game account secrets", "details": err.Error()})
-			// delete the game account if we can't save the secrets
-			_ = database.DeleteGameAccountByID(db, AccountID)
-			return
-		}
-
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Fortnite account connected successfully", "id": loginResult.AccountId, "username": loginResult.DisplayName, "pavos": pavos})
 	}
 
@@ -250,6 +252,7 @@ func HandlerFinishConnectFortniteAccount(db *sql.DB) gin.HandlerFunc {
 
 // device auth with secret and device id
 func DeviceAuthIdGrant(db *sql.DB, deviceSecrets types.GameAccountSecrets) (types.LoginResultResponse, error) {
+	//running id grant with device id and secret
 	client := &http.Client{Timeout: 10 * time.Second}
 	authHeader := "basic " + base64.StdEncoding.EncodeToString([]byte(utils.EpicClient+":"+utils.EpicSecret))
 
@@ -362,7 +365,8 @@ func RefreshAccessToken(refreshToken string, db *sql.DB) (types.LoginResultRespo
 	authHeader := "basic " + base64.StdEncoding.EncodeToString([]byte(utils.EpicClient+":"+utils.EpicSecret))
 
 	reqToken, err := http.NewRequest("POST", "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token", strings.NewReader(
-		fmt.Sprint("grant_type=refresh_token&refresh_token=%s", refreshToken),
+		//fmt.Sprint("grant_type=refresh_token&refresh_token=%s", refreshToken),
+		fmt.Sprintf("grant_type=refresh_token&refresh_token=%s", url.QueryEscape(refreshToken)),
 	))
 	if err != nil {
 		return types.LoginResultResponse{}, fmt.Errorf("could not create request for token refresh: %w", err)
@@ -383,10 +387,17 @@ func RefreshAccessToken(refreshToken string, db *sql.DB) (types.LoginResultRespo
 		return types.LoginResultResponse{}, err
 	}
 
+	if respToken.StatusCode != 200 {
+		return types.LoginResultResponse{}, fmt.Errorf("unexpected status code: %d, response: %s", respToken.StatusCode, respToken.Body)
+	}
+
+	//print response
+	fmt.Println("Token result:", tokenResult)
+
 	//UPDATE DB
 	AccountId, err := uuid.Parse(tokenResult.AccountId)
 	if err != nil {
-		fmt.Printf("Failed to parse game ID: %v", err)
+		fmt.Printf("Failed to parse game ID.: %v", err)
 		return types.LoginResultResponse{}, err
 	}
 
@@ -429,7 +440,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 	client := &http.Client{}
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request execution failed: %w", err)
+		return nil, fmt.Errorf("request execution failed.: %w", err)
 	}
 
 	// If the response indicates an expired token, refresh it
@@ -461,17 +472,17 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 			// Retry the request with the new access token
 			resp, err = client.Do(request)
 			if err != nil {
-				return nil, fmt.Errorf("retry request execution failed: %w", err)
+				return nil, fmt.Errorf("retry request execution failed..: %s", err)
 			}
 			return resp, nil
 
 		} else {
 			// If refreshing the token fails, DeviceAuthIdGrant
-			fmt.Printf("Failed to refresh access token: %v", err)
+			fmt.Printf("Failed to refresh access token.: %v", err)
 
 			GameAccountStr, err := utils.ConvertUUIDToString(GameAccount.ID)
 			if err != nil {
-				return nil, fmt.Errorf("invalid game account ID: %w", err)
+				return nil, fmt.Errorf("invalid game account ID: %s", err)
 			}
 			if GameAccountStr == "" {
 				return nil, fmt.Errorf("game account ID is empty")
@@ -479,8 +490,10 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 			// get the device secrets from the database
 			deviceSecrets, err := database.GetGameAccountSecrets(db, GameAccountStr)
 			if err != nil {
-				return nil, fmt.Errorf("could not get device secrets: %w", err)
+				return nil, fmt.Errorf("could not get device secrets: %s", err)
 			}
+			//print device secrets
+			fmt.Printf("Device Secrets: %+v\n", deviceSecrets)
 			// Call DeviceAuthIdGrant to get new tokens
 			newTokens, err := DeviceAuthIdGrant(db, deviceSecrets)
 			if err != nil {
@@ -513,7 +526,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 			// Retry the request with the new access token
 			resp, err = client.Do(request)
 			if err != nil {
-				return nil, fmt.Errorf("retry request execution failed: %w, code %w", err, resp.StatusCode)
+				return nil, fmt.Errorf("retry request execution failed...: %s, code %d", err, resp.StatusCode)
 			}
 			return resp, nil
 		}
