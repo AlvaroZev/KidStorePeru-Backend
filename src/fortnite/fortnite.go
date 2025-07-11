@@ -166,7 +166,6 @@ func GetAccountPavos(db *sql.DB, AccountID uuid.UUID) (int, error) {
 		return 0, fmt.Errorf("could not create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "EpicGamesLauncher/14.6.2-14746003+++Portal+Release-Live Windows/10.0.19044.1.256.64bit")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := ExecuteOperationWithRefresh(req, db, AccountID, "pavos")
