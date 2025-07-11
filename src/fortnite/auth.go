@@ -4,10 +4,12 @@ import (
 	database "KidStoreBotBE/src/db"
 	"KidStoreBotBE/src/types"
 	"KidStoreBotBE/src/utils"
+	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -430,8 +432,10 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 
 	// Set appropriate header
 	if pavosSource {
+		fmt.Printf("Using Pavo source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
 	} else {
+		fmt.Printf("Using standard source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
 	}
 
@@ -441,7 +445,21 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 		fmt.Printf("Initial request execution failed for account %s: %v\n", GameAccountID, err)
 		return nil, fmt.Errorf("request execution failed: %s", err)
 	}
+	//print response status code and body
+	fmt.Printf("Response Status Code: %d\n", resp.StatusCode)
+	if resp.Body != nil {
 
+		defer resp.Body.Close()
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Printf("Failed to read response body for account %s: %v\n", GameAccountID, err)
+			return nil, fmt.Errorf("could not read response body: %w", err)
+		}
+		fmt.Printf("Response Body: %s\n", string(bodyBytes))
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Reset body for further reads
+	} else {
+		fmt.Printf("Response Body is nil for account %s\n", GameAccountID)
+	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		fmt.Printf("Access token expired or unauthorized for account %s, attempting refresh\n", GameAccountID)
 
