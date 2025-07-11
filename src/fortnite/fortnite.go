@@ -208,39 +208,42 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		result := utils.ProtectedEndpointHandler(c)
 		if result != 200 {
+			fmt.Printf("Protected endpoint rejected request, status: %d\n", result)
 			return
 		}
 
 		var req types.GiftRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			fmt.Printf("Failed to bind JSON: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 			return
 		}
 
 		AccountId, err := uuid.Parse(req.AccountID)
 		if err != nil {
-			fmt.Printf("Failed to parse game ID: %v", err)
+			fmt.Printf("Failed to parse game ID: %v\n", err)
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid account ID format", "details": err.Error()})
 			return
 		}
 
-		//check if account has enough gifts
 		remainingGifts, err := database.GetRemainingGifts(db, AccountId)
 		if err != nil {
+			fmt.Printf("Error fetching remaining gifts: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch remaining gifts", "details": err.Error()})
 			return
 		}
 		if remainingGifts <= 0 {
+			fmt.Printf("No gifts remaining for account %s\n", AccountId)
 			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "You have no gifts left to send", "remainingGifts": remainingGifts})
 			return
 		}
 
-		//remove - from the receiver ID and AccountID
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
 
 		err = sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice, &req.SenderName)
 		if err != nil {
+			fmt.Printf("Error sending gift request: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not send gift", "details": err.Error()})
 			return
 		}
@@ -248,7 +251,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		err = database.AddTransaction(db, types.Transaction{
 			ID:              uuid.New(),
 			GameAccountID:   AccountId,
-			SenderName:      &req.SenderName, // Assuming this is the sender's account ID
+			SenderName:      &req.SenderName,
 			ReceiverID:      &req.ReceiverID,
 			ReceiverName:    &req.ReceiverName,
 			ObjectStoreID:   req.GiftId,
@@ -259,31 +262,31 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 			CreatedAt:       time.Now(),
 		})
 		if err != nil {
+			fmt.Printf("Error adding transaction: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not add transaction", "details": err.Error()})
 			return
 		}
 
-		//update the sender's PaVos with func UpdatePavosGameAccount
 		_, err = UpdatePavosGameAccount(db, AccountId)
 		if err != nil {
+			fmt.Printf("Error updating PaVos: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update PaVos after sending gift", "details": err.Error()})
 			return
 		}
 
-		// Update the sender's remaining gifts
-		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1) // Decrease by 1
+		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1)
 		if err != nil {
+			fmt.Printf("Error updating remaining gifts: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update remaining gifts", "details": err.Error()})
 			return
 		}
 
+		fmt.Printf("Gift sent successfully from %s to %s\n", req.AccountID, req.ReceiverID)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Gift sent successfully"})
-
 	}
 }
 
 func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int, senderName *string) error {
-
 	payload := map[string]interface{}{
 		"offerId":            giftItem,
 		"currency":           "MtxCurrency",
@@ -297,70 +300,70 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
+		fmt.Println("Error marshaling payload:", err)
 		return err
 	}
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/%s/client/GiftCatalogEntry?profileId=common_core", accountIDStr),
 		bytes.NewBuffer(jsonPayload))
 	if err != nil {
+		fmt.Println("Error creating request:", err)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := ExecuteOperationWithRefresh(req, db, accountID, "")
 	if err != nil {
+		fmt.Println("Error executing request:", err)
 		return err
 	}
 	defer resp.Body.Close()
 
-	//print response
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response: %s\n", resp.Proto)
 
-	//no remaning gifts response
-	// {
-	//     "errorCode": "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed",
-	//     "errorMessage": "Could not purchase catalog offer [VIRTUAL]1 x Bulletproof for 200 MtxCurrency, item AthenaDance:eid_assassinvest x 1 (exceeding the limit of 0)",
-	//     "messageVars": ["[VIRTUAL]1 x Bulletproof for 200 MtxCurrency", "AthenaDance:eid_assassinvest", "1", "0"],
-	//     "numericErrorCode": 28004,
-	//     "originatingService": "fortnite",
-	//     "intent": "prod-live"
-	// }
-
-	// Check if the response status code indicates no remaining gifts, check for errorCode in the response body
 	var errorResponse map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
+		fmt.Println("Error decoding response body:", err)
 		return fmt.Errorf("could not decode response: %s", err)
 	}
+
 	if errorCode, ok := errorResponse["errorCode"].(string); ok && errorCode == "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed" {
-		//set the remaining gifts to 0 in the database
 		err = database.UpdateRemainingGifts(db, accountID, 0)
 		if err != nil {
+			fmt.Println("Error updating remaining gifts in database:", err)
 			return fmt.Errorf("could not update remaining gifts in database: %s", err)
 		}
 
-		//add 5 external transactions to the database (not made within this system), this will help reset the remaining gifts count to 5 after 24 hours.
 		for range 5 {
 			err = database.AddTransaction(db, types.Transaction{
 				ID:              uuid.New(),
 				GameAccountID:   accountID,
 				SenderName:      senderName,
 				ReceiverID:      &receiverUserID,
-				ReceiverName:    nil, // No receiver name for external transactions
+				ReceiverName:    nil,
 				ObjectStoreID:   giftItem,
 				ObjectStoreName: "External Gift",
 				RegularPrice:    float64(giftPrice),
 				FinalPrice:      float64(giftPrice),
-				GiftImage:       "", // No image for external transactions
+				GiftImage:       "",
 				CreatedAt:       time.Now(),
 			})
+			if err != nil {
+				fmt.Println("Error adding external transaction:", err)
+				return fmt.Errorf("failed to add external transaction: %s", err)
+			}
 		}
-		// Return an error indicating no remaining gifts
-		return fmt.Errorf("no remaining gifts available: %s", errorResponse["errorMessage"])
+
+		msg := fmt.Sprintf("no remaining gifts available: %s", errorResponse["errorMessage"])
+		fmt.Println(msg)
+		return fmt.Errorf("%s", msg)
 	}
 
-	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 && resp.StatusCode != 203 && resp.StatusCode != 204 {
-		return fmt.Errorf("failed to send gift, status code: %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode > 204 {
+		msg := fmt.Sprintf("failed to send gift, status code: %d", resp.StatusCode)
+		fmt.Println(msg)
+		return fmt.Errorf("%s", msg)
 	}
 
 	return nil
