@@ -420,34 +420,34 @@ func RefreshAccessToken(refreshToken string, db *sql.DB) (types.LoginResultRespo
 }
 
 func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountID uuid.UUID, source string) (*http.Response, error) {
+	pavosSource := source == "pavos"
 
-	pavosSource := source == "pavos" // Check if the source is pavos
-
-	// Get the current tokens from the database
 	GameAccount, err := database.GetGameAccount(db, GameAccountID)
 	if err != nil {
-		return nil, fmt.Errorf("could not get game account tokens: %w", err)
+		fmt.Printf("Could not get game account tokens for %s: %v\n", GameAccountID, err)
+		return nil, fmt.Errorf("could not get game account tokens: %s", err)
 	}
 
-	// Set the access token in the request header
+	// Set appropriate header
 	if pavosSource {
 		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
 	} else {
 		request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
 	}
 
-	// Execute the request
 	client := &http.Client{}
 	resp, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("request execution failed.: %w", err)
+		fmt.Printf("Initial request execution failed for account %s: %v\n", GameAccountID, err)
+		return nil, fmt.Errorf("request execution failed: %s", err)
 	}
 
-	// If the response indicates an expired token, refresh it
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		fmt.Printf("Access token expired or unauthorized for account %s, attempting refresh\n", GameAccountID)
+
 		newTokens, err := RefreshAccessToken(GameAccount.RefreshToken, db)
 		if err == nil {
-			// Update the game account in the database with the new tokens
+			fmt.Printf("Access token refresh successful for account %s\n", GameAccountID)
 			err = database.UpdateGameAccount(db, types.GameAccount{
 				ID:                  GameAccount.ID,
 				AccessToken:         newTokens.AccessToken,
@@ -459,78 +459,81 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 				UpdatedAt:           time.Now(),
 			})
 			if err != nil {
+				fmt.Printf("Failed to update game account with refreshed tokens for account %s: %v\n", GameAccount.ID, err)
 				return nil, fmt.Errorf("could not update game account with new tokens: %w", err)
 			}
 
-			// Update the request with the new access token
+			// Retry with new token
 			if pavosSource {
-				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
+				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
 			} else {
-				request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
+				request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
 			}
 
-			// Retry the request with the new access token
 			resp, err = client.Do(request)
 			if err != nil {
-				return nil, fmt.Errorf("retry request execution failed..: %s", err)
-			}
-			return resp, nil
-
-		} else {
-			// If refreshing the token fails, DeviceAuthIdGrant
-			fmt.Printf("Failed to refresh access token.: %v", err)
-
-			GameAccountStr, err := utils.ConvertUUIDToString(GameAccount.ID)
-			if err != nil {
-				return nil, fmt.Errorf("invalid game account ID: %s", err)
-			}
-			if GameAccountStr == "" {
-				return nil, fmt.Errorf("game account ID is empty")
-			}
-			// get the device secrets from the database
-			deviceSecrets, err := database.GetGameAccountSecrets(db, GameAccountStr)
-			if err != nil {
-				return nil, fmt.Errorf("could not get device secrets: %s", err)
-			}
-			//print device secrets
-			fmt.Printf("Device Secrets: %+v\n", deviceSecrets)
-			// Call DeviceAuthIdGrant to get new tokens
-			newTokens, err := DeviceAuthIdGrant(db, deviceSecrets)
-			if err != nil {
-				return nil, fmt.Errorf("could not refresh access token using device auth: %w", err)
-			}
-			// Update the game account in the database with the new tokens
-			err = database.UpdateGameAccount(db, types.GameAccount{
-				ID:                  GameAccount.ID,
-				AccessToken:         newTokens.AccessToken,
-				AccessTokenExp:      newTokens.AccessTokenExpiration,
-				AccessTokenExpDate:  time.Now().Add(time.Duration(newTokens.AccessTokenExpiration) * time.Second),
-				RefreshToken:        newTokens.RefreshToken,
-				RefreshTokenExp:     newTokens.RefreshTokenExpiration,
-				RefreshTokenExpDate: time.Now().Add(time.Duration(newTokens.RefreshTokenExpiration) * time.Second),
-				UpdatedAt:           time.Now(),
-			})
-
-			if err != nil {
-				return nil, fmt.Errorf("could not update game account with new tokens: %w",
-					err)
-			}
-
-			// Update the request with the new access token
-			if pavosSource {
-				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
-			} else {
-				request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
-			}
-
-			// Retry the request with the new access token
-			resp, err = client.Do(request)
-			if err != nil {
-				return nil, fmt.Errorf("retry request execution failed...: %s, code %d", err, resp.StatusCode)
+				fmt.Printf("Retry request after token refresh failed for account %s: %v\n", GameAccount.ID, err)
+				return nil, fmt.Errorf("retry request execution failed: %s", err)
 			}
 			return resp, nil
 		}
+
+		// Token refresh via refresh token failed
+		fmt.Printf("RefreshAccessToken failed for account %s: %v\n", GameAccount.ID, err)
+
+		GameAccountStr, err := utils.ConvertUUIDToString(GameAccount.ID)
+		if err != nil {
+			fmt.Printf("Failed to convert GameAccount ID to string: %v\n", err)
+			return nil, fmt.Errorf("invalid game account ID: %w", err)
+		}
+		if GameAccountStr == "" {
+			fmt.Println("Game account ID is empty after conversion")
+			return nil, fmt.Errorf("game account ID is empty")
+		}
+
+		deviceSecrets, err := database.GetGameAccountSecrets(db, GameAccountStr)
+		if err != nil {
+			fmt.Printf("Could not get device secrets for account %s: %v\n", GameAccountStr, err)
+			return nil, fmt.Errorf("could not get device secrets: %w", err)
+		}
+		fmt.Printf("Device Secrets for %s: %+v\n", GameAccountStr, deviceSecrets)
+
+		newTokens, err = DeviceAuthIdGrant(db, deviceSecrets)
+		if err != nil {
+			fmt.Printf("DeviceAuthIdGrant failed for account %s: %v\n", GameAccountStr, err)
+			return nil, fmt.Errorf("could not refresh access token using device auth: %w", err)
+		}
+
+		err = database.UpdateGameAccount(db, types.GameAccount{
+			ID:                  GameAccount.ID,
+			AccessToken:         newTokens.AccessToken,
+			AccessTokenExp:      newTokens.AccessTokenExpiration,
+			AccessTokenExpDate:  time.Now().Add(time.Duration(newTokens.AccessTokenExpiration) * time.Second),
+			RefreshToken:        newTokens.RefreshToken,
+			RefreshTokenExp:     newTokens.RefreshTokenExpiration,
+			RefreshTokenExpDate: time.Now().Add(time.Duration(newTokens.RefreshTokenExpiration) * time.Second),
+			UpdatedAt:           time.Now(),
+		})
+		if err != nil {
+			fmt.Printf("Could not update game account with new tokens after device auth for account %s: %v\n", GameAccount.ID, err)
+			return nil, fmt.Errorf("could not update game account with new tokens: %w", err)
+		}
+
+		// Retry request again with new token
+		if pavosSource {
+			request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
+		} else {
+			request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
+		}
+
+		resp, err = client.Do(request)
+		if err != nil {
+			fmt.Printf("Retry request after device auth failed for account %s: %v\n", GameAccount.ID, err)
+			return nil, fmt.Errorf("retry request execution failed: %w", err)
+		}
+		return resp, nil
 	}
+
 	return resp, nil
 }
 

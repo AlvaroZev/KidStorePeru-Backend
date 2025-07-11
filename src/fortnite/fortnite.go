@@ -17,37 +17,33 @@ import (
 )
 
 func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) {
-
 	var gameAccounts []types.GameAccount
 	var err error
 
-	//get all game accounts for the user
 	if !admin {
-		//get user ID from context
+		// Get game accounts for a specific user
 		gameAccounts, err = database.GetGameAccountByOwner(db, userID)
 		if err != nil {
-			fmt.Printf("Could not fetch game accounts for user %s: %s\n", userID, err.Error())
+			fmt.Printf("Could not fetch game accounts for user %s: %v\n", userID, err)
 			return
 		}
-
 	} else {
-		//get all game accounts
+		// Get all game accounts
 		gameAccounts, err = database.GetAllGameAccounts(db)
 		if err != nil {
-			fmt.Printf("Could not fetch all game accounts: %s\n", err.Error())
+			fmt.Printf("Could not fetch all game accounts: %v\n", err)
 			return
 		}
-
 	}
 
 	for _, account := range gameAccounts {
 		_, err := UpdatePavosGameAccount(db, account.ID)
 		if err != nil {
-			fmt.Printf("Could not update PaVos for account %s: %s\n", account.ID, err.Error())
+			fmt.Printf("Could not update PaVos for account %s: %v\n", account.ID, err)
 			continue
 		}
+		fmt.Printf("Successfully updated PaVos for account %s\n", account.ID)
 	}
-
 }
 
 func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.HandlerFunc {
@@ -97,17 +93,17 @@ func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.Han
 func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
 	pavos, err := GetAccountPavos(db, accountID)
 	if err != nil {
-		fmt.Printf("Could not get PaVos for account %s: %s\n", accountID, err.Error())
-		return 0, fmt.Errorf("could not get PaVos for account %s: %w", accountID, err)
+		fmt.Printf("Could not get PaVos for account %s.: %v\n", accountID, err)
+		return 0, fmt.Errorf("could not get PaVos for account %s.: %s", accountID, err)
 	}
 
-	//update the pavos in the database
 	err = database.UpdatePaVos(db, accountID, pavos)
 	if err != nil {
-		fmt.Printf("Could not update PaVos for account %s: %s\n", accountID, err.Error())
-		return 0, fmt.Errorf("could not update PaVos for account %s: %w", accountID, err)
+		fmt.Printf("Could not update PaVos for account %s.: %v\n", accountID, err)
+		return 0, fmt.Errorf("could not update PaVos for account %s.: %s", accountID, err)
 	}
-	fmt.Printf("Updated PaVos for account %s: %d\n", accountID, pavos)
+
+	fmt.Printf("Successfully updated PaVos for account %s: %d\n", accountID, pavos)
 	return pavos, nil
 }
 
@@ -166,40 +162,49 @@ func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
 func GetAccountPavos(db *sql.DB, AccountID uuid.UUID) (int, error) {
 	req, err := http.NewRequest("GET", "https://www.epicgames.com/account/v2/api/wallet/fortnite", nil)
 	if err != nil {
+		fmt.Printf("Could not create request for account %s: %v\n", AccountID, err)
 		return 0, fmt.Errorf("could not create request: %w", err)
 	}
-	//set cookieEPIC_BEARER_TOKEN=acces_token
+
 	req.Header.Set("User-Agent", "EpicGamesLauncher/14.6.2-14746003+++Portal+Release-Live Windows/10.0.19044.1.256.64bit")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := ExecuteOperationWithRefresh(req, db, AccountID, "pavos")
 	if err != nil {
+		fmt.Printf("Could not send request for account %s: %v\n", AccountID, err)
 		return 0, fmt.Errorf("could not send request: %w", err)
 	}
-
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Unexpected status code for account %s: %d\n", AccountID, resp.StatusCode)
 		return 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
+
 	var response types.PavosResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("Could not decode response for account %s: %v\n", AccountID, err)
 		return 0, fmt.Errorf("could not decode response: %w", err)
 	}
+
 	if !response.Success {
+		fmt.Printf("API call was not successful for account %s\n", AccountID)
 		return 0, fmt.Errorf("API call was not successful")
 	}
+
 	pavos := 0
 	for _, purchase := range response.Data.Wallet.Purchased {
-		if purchase.Type == "Currency:MtxPurchased" {
-			pavos += purchase.Values.Shared
-		} else if purchase.Type == "Currency:MtxPurchaseBonus" {
+		if purchase.Type == "Currency:MtxPurchased" || purchase.Type == "Currency:MtxPurchaseBonus" {
 			pavos += purchase.Values.Shared
 		}
 	}
 
 	if pavos < 0 {
+		fmt.Printf("Negative PaVos value received for account %s: %d\n", AccountID, pavos)
 		return 0, fmt.Errorf("negative PaVos value received: %d", pavos)
 	}
+
+	fmt.Printf("Fetched PaVos for account %s: %d\n", AccountID, pavos)
 	return pavos, nil
 }
 
