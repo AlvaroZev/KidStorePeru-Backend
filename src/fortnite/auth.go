@@ -242,8 +242,8 @@ func HandlerFinishConnectFortniteAccount(db *sql.DB) gin.HandlerFunc {
 		if err != nil {
 			fmt.Println("Error saving game account:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not save game account", "details": err.Error()})
-			//delete the game account if we can't save the pavos
-			_ = database.DeleteGameAccountByID(db, AccountID)
+			//dont delete the game account if we can't save the pavos
+			//_ = database.DeleteGameAccountByID(db, AccountID)
 			return
 		}
 
