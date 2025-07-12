@@ -245,7 +245,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
 
-		err = sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice, &req.SenderName)
+		err, err2 := sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice, &req.SenderName)
 		if err != nil {
 			fmt.Printf("Error sending gift request: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not send gift", "details": err.Error()})
@@ -267,22 +267,28 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		})
 		if err != nil {
 			fmt.Printf("Error adding transaction: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not add transaction", "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not add transaction", "error2": err2.Error(), "details": err.Error()})
 			return
 		}
 
 		_, err = UpdatePavosGameAccount(db, AccountId)
 		if err != nil {
 			fmt.Printf("Error updating PaVos: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update PaVos after sending gift", "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not update PaVos after sending gift", "error2": err2.Error(), "details": err.Error()})
 			return
 		}
 
 		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1)
 		if err != nil {
 			fmt.Printf("Error updating remaining gifts: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not update remaining gifts", "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not update remaining gifts", "error2": err2.Error(), "details": err.Error()})
 			return
+		}
+
+		if err2 != nil {
+			//soft error, or error 2, happens when the gift was sent, but something else failed, like updating the database.
+			fmt.Printf("Error sending gift request, with soft error: %v\n", err2)
+			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Gift sent with soft error", "message": "Gift sent successfully, but there was a soft error", "details": err2.Error()})
 		}
 
 		fmt.Printf("Gift sent successfully from %s to %s\n", req.AccountID, req.ReceiverID)
@@ -290,7 +296,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int, senderName *string) error {
+func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, receiverUserID string, giftItem string, giftPrice int, senderName *string) (error, error) {
 	payload := map[string]interface{}{
 		"offerId":            giftItem,
 		"currency":           "MtxCurrency",
@@ -305,21 +311,21 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		fmt.Println("Error marshaling payload:", err)
-		return err
+		return err, nil
 	}
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://fngw-mcp-gc-livefn.ol.epicgames.com/fortnite/api/game/v2/profile/%s/client/GiftCatalogEntry?profileId=common_core", accountIDStr),
 		bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		fmt.Println("Error creating request:", err)
-		return err
+		return err, nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := ExecuteOperationWithRefresh(req, db, accountID, "")
 	if err != nil {
 		fmt.Println("Error executing request:", err)
-		return err
+		return err, nil
 	}
 	defer resp.Body.Close()
 
@@ -329,14 +335,14 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 	var errorResponse map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
 		fmt.Println("Error decoding response body:", err)
-		return fmt.Errorf("could not decode response: %s", err)
+		return nil, (fmt.Errorf("could not decode response: %s", err))
 	}
 
 	if errorCode, ok := errorResponse["errorCode"].(string); ok && errorCode == "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed" {
 		err = database.UpdateRemainingGifts(db, accountID, 0)
 		if err != nil {
 			fmt.Println("Error updating remaining gifts in database:", err)
-			return fmt.Errorf("could not update remaining gifts in database: %s", err)
+			return nil, (fmt.Errorf("could not update remaining gifts in database: %s", err))
 		}
 
 		for range 5 {
@@ -355,22 +361,22 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 			})
 			if err != nil {
 				fmt.Println("Error adding external transaction:", err)
-				return fmt.Errorf("failed to add external transaction: %s", err)
+				return nil, (fmt.Errorf("failed to add external transaction: %s", err))
 			}
 		}
 
 		msg := fmt.Sprintf("no remaining gifts available: %s", errorResponse["errorMessage"])
 		fmt.Println(msg)
-		return fmt.Errorf("%s", msg)
+		return nil, (fmt.Errorf("%s", msg))
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 204 {
 		msg := fmt.Sprintf("failed to send gift, status code: %d", resp.StatusCode)
 		fmt.Println(msg)
-		return fmt.Errorf("%s", msg)
+		return nil, (fmt.Errorf("%s", msg))
 	}
 
-	return nil
+	return nil, nil
 }
 
 func SmartUpdatePavos(db *sql.DB, accountID uuid.UUID, pavos int) error {
