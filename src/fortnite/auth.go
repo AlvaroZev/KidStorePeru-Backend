@@ -422,18 +422,27 @@ func RefreshAccessToken(refreshToken string, db *sql.DB) (types.LoginResultRespo
 }
 
 func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountID uuid.UUID, source string) (*http.Response, error) {
-	pavosSource := source == "pavos"
+	//pavosSource := source == "pavos"
 
 	GameAccount, err := database.GetGameAccount(db, GameAccountID)
 	if err != nil {
 		fmt.Printf("Could not get game account tokens for %s: %v\n", GameAccountID, err)
 		return nil, fmt.Errorf("could not get game account tokens: %s", err)
 	}
+	//print source
+	fmt.Printf("Executing operation for account %s with source %s\n", GameAccountID, source)
 
 	// Set appropriate header
-	if pavosSource {
+	if source == "pavos" {
 		fmt.Printf("Using Pavo source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
+		request.Header.Set("User-Agent", "PostmanRuntime/7.44.1")
+		//keep alive
+		request.Header.Set("Connection", "keep-alive")
+		//accept encoding
+		//request.Header.Set("Accept-Encoding", "gzip, deflate, br")
+		//accept
+		request.Header.Set("Accept", "*/*")
 	} else {
 		fmt.Printf("Using standard source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
@@ -482,7 +491,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 			}
 
 			// Retry with new token
-			if pavosSource {
+			if source == "pavos" {
 				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
 			} else {
 				request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
@@ -538,7 +547,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 		}
 
 		// Retry request again with new token
-		if pavosSource {
+		if source == "pavos" {
 			request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
 		} else {
 			request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)

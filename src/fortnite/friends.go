@@ -37,7 +37,7 @@ func HandlerSearchOnlineFortniteAccount(db *sql.DB) gin.HandlerFunc {
 
 		request, _ := http.NewRequest("GET", fmt.Sprintf("https://account-public-service-prod.ol.epicgames.com/account/api/public/account/displayName/%s", req.DisplayName), nil)
 
-		resp, err := ExecuteOperationWithRefresh(request, db, AccountID, "")
+		resp, err := ExecuteOperationWithRefresh(request, db, AccountID, "friendSearch")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "No se encontro al usuario", "details": err.Error()})
 			return
@@ -52,7 +52,7 @@ func HandlerSearchOnlineFortniteAccount(db *sql.DB) gin.HandlerFunc {
 
 		reqFriends, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", req.AccountId, tokenResult.AccountId), nil)
 
-		respFriends, err := ExecuteOperationWithRefresh(reqFriends, db, AccountID, "")
+		respFriends, err := ExecuteOperationWithRefresh(reqFriends, db, AccountID, "SearchFridnd")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Error interno", "details": err.Error()})
 			return
@@ -118,7 +118,7 @@ func getIncomingRequests(db *sql.DB, gameAccount types.GameAccount) ([]types.Fri
 
 	request, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/incoming", AccountIDStr), nil)
 
-	resp, err := ExecuteOperationWithRefresh(request, db, gameAccount.ID, "")
+	resp, err := ExecuteOperationWithRefresh(request, db, gameAccount.ID, "SearchFriend2")
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func acceptFriendRequests(db *sql.DB, gameAccount types.GameAccount, friends []t
 
 	for _, friend := range friends {
 		request, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", AccountIDStr, friend.AccountID), nil)
-		resp, err := ExecuteOperationWithRefresh(request, db, gameAccount.ID, "")
+		resp, err := ExecuteOperationWithRefresh(request, db, gameAccount.ID, "acceptFriendRequest")
 		if err != nil {
 			fmt.Printf("Failed to accept friend request from %s: %v\n", friend.AccountID, err)
 			continue

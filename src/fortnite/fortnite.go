@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -37,6 +38,8 @@ func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) {
 	}
 
 	for _, account := range gameAccounts {
+		//wait 1s+1rand(5) seconds before updating each account
+		time.Sleep(time.Duration(rand.Float32()+5) * time.Second)
 		_, err := UpdatePavosGameAccount(db, account.ID)
 		if err != nil {
 			fmt.Printf("Could not update PaVos for account %s: %v\n", account.ID, err)
@@ -76,6 +79,8 @@ func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.Han
 		}
 
 		for _, account := range gameAccounts {
+			//wait 1s+1rand(5) seconds before updating each account
+			time.Sleep(time.Duration(rand.Float32()+1) * time.Second)
 			_, err := UpdatePavosGameAccount(db, account.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
@@ -165,8 +170,6 @@ func GetAccountPavos(db *sql.DB, AccountID uuid.UUID) (int, error) {
 		fmt.Printf("Could not create request for account %s: %v\n", AccountID, err)
 		return 0, fmt.Errorf("could not create request: %w", err)
 	}
-
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := ExecuteOperationWithRefresh(req, db, AccountID, "pavos")
 	if err != nil {
@@ -322,7 +325,7 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := ExecuteOperationWithRefresh(req, db, accountID, "")
+	resp, err := ExecuteOperationWithRefresh(req, db, accountID, "gift")
 	if err != nil {
 		fmt.Println("Error executing request:", err)
 		return err, nil
