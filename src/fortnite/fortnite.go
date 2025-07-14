@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"strings"
@@ -39,7 +40,7 @@ func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) {
 
 	for _, account := range gameAccounts {
 		//wait 1s+1rand(5) seconds before updating each account
-		time.Sleep(time.Duration(rand.Float32()+5) * time.Second)
+		time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
 		_, err := UpdatePavosGameAccount(db, account.ID)
 		if err != nil {
 			fmt.Printf("Could not update PaVos for account %s: %v\n", account.ID, err)
@@ -80,7 +81,7 @@ func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.Han
 
 		for _, account := range gameAccounts {
 			//wait 1s+1rand(5) seconds before updating each account
-			time.Sleep(time.Duration(rand.Float32()+1) * time.Second)
+			time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
 			_, err := UpdatePavosGameAccount(db, account.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
@@ -229,32 +230,52 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		AccountId, err := uuid.Parse(req.AccountID)
 		if err != nil {
 			fmt.Printf("Failed to parse game ID: %v\n", err)
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Invalid account ID format", "details": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid account ID format",
+				"details": err.Error(),
+			})
 			return
 		}
 
 		remainingGifts, err := database.GetRemainingGifts(db, AccountId)
+		fmt.Printf("Remaining gifts for account %s: %d\n", AccountId, remainingGifts)
 		if err != nil {
 			fmt.Printf("Error fetching remaining gifts: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not fetch remaining gifts", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not fetch remaining gifts",
+				"details": err.Error(),
+			})
 			return
 		}
 		if remainingGifts <= 0 {
-			fmt.Printf("No gifts remaining for account %s\n", AccountId)
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "You have no gifts left to send", "remainingGifts": remainingGifts})
+
+			fmt.Printf("No gifts remaining for account %s\n", AccountId, remainingGifts)
+			c.JSON(http.StatusForbidden, gin.H{
+				"success":        false,
+				"error":          "You have no gifts left to send",
+				"remainingGifts": remainingGifts,
+			})
 			return
 		}
 
+		// Normalize IDs
 		req.AccountID = strings.ReplaceAll(req.AccountID, "-", "")
 		req.ReceiverID = strings.ReplaceAll(req.ReceiverID, "-", "")
 
 		err, err2 := sendGiftRequest(db, req.AccountID, AccountId, req.ReceiverID, req.GiftId, req.GiftPrice, &req.SenderName)
 		if err != nil {
 			fmt.Printf("Error sending gift request: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not send gift", "details": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not send gift",
+				"details": err.Error(),
+			})
 			return
 		}
 
+		// Attempt to record the transaction
 		err = database.AddTransaction(db, types.Transaction{
 			ID:              uuid.New(),
 			GameAccountID:   AccountId,
@@ -270,32 +291,95 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		})
 		if err != nil {
 			fmt.Printf("Error adding transaction: %v\n", err)
-			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not add transaction", "error2": err2.Error(), "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{
+				"success": true,
+				"message": "Regalo enviado exitosamente",
+				"error":   "No se pudo registrar la transacción",
+				"details": err.Error(),
+				"giftInfo": gin.H{
+					"senderName":   req.SenderName,
+					"receiverName": req.ReceiverName,
+					"giftName":     req.GiftName,
+					"giftPrice":    req.GiftPrice,
+					"giftImage":    req.GiftImage,
+					"giftId":       req.GiftId,
+				},
+			})
 			return
 		}
 
 		_, err = UpdatePavosGameAccount(db, AccountId)
 		if err != nil {
 			fmt.Printf("Error updating PaVos: %v\n", err)
-			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not update PaVos after sending gift", "error2": err2.Error(), "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{
+				"success": true,
+				"message": "Regalo enviado exitosamente",
+				"error":   "No se pudieron actualizar los PaVos",
+				"details": err.Error(),
+				"giftInfo": gin.H{
+					"senderName":   req.SenderName,
+					"receiverName": req.ReceiverName,
+					"giftName":     req.GiftName,
+					"giftPrice":    req.GiftPrice,
+					"giftImage":    req.GiftImage,
+					"giftId":       req.GiftId,
+				},
+			})
 			return
 		}
 
 		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1)
 		if err != nil {
 			fmt.Printf("Error updating remaining gifts: %v\n", err)
-			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Could not update remaining gifts", "error2": err2.Error(), "details": err.Error()})
+			c.JSON(http.StatusAccepted, gin.H{
+				"success": true,
+				"message": "Regalo enviado exitosamente",
+				"error":   "No se pudo actualizar el contador de regalos restantes",
+				"details": err.Error(),
+				"giftInfo": gin.H{
+					"senderName":   req.SenderName,
+					"receiverName": req.ReceiverName,
+					"giftName":     req.GiftName,
+					"giftPrice":    req.GiftPrice,
+					"giftImage":    req.GiftImage,
+					"giftId":       req.GiftId,
+				},
+			})
 			return
 		}
 
 		if err2 != nil {
-			//soft error, or error 2, happens when the gift was sent, but something else failed, like updating the database.
-			fmt.Printf("Error sending gift request, with soft error: %v\n", err2)
-			c.JSON(http.StatusAccepted, gin.H{"success": true, "error": "Gift sent with soft error", "message": "Gift sent successfully, but there was a soft error", "details": err2.Error()})
+			fmt.Printf("Gift sent with soft error: %v\n", err2)
+			c.JSON(http.StatusAccepted, gin.H{
+				"success": true,
+				"message": "Regalo enviado exitosamente",
+				"error":   "Ocurrió un error menor tras enviar el regalo",
+				"details": err2.Error(),
+				"giftInfo": gin.H{
+					"senderName":   req.SenderName,
+					"receiverName": req.ReceiverName,
+					"giftName":     req.GiftName,
+					"giftPrice":    req.GiftPrice,
+					"giftImage":    req.GiftImage,
+					"giftId":       req.GiftId,
+				},
+			})
+			return
 		}
 
 		fmt.Printf("Gift sent successfully from %s to %s\n", req.AccountID, req.ReceiverID)
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "Gift sent successfully"})
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Regalo enviado exitosamente",
+			"giftInfo": gin.H{
+				"senderName":   req.SenderName,
+				"receiverName": req.ReceiverName,
+				"giftName":     req.GiftName,
+				"giftPrice":    req.GiftPrice,
+				"giftImage":    req.GiftImage,
+				"giftId":       req.GiftId,
+			},
+		})
 	}
 }
 
@@ -335,10 +419,17 @@ func sendGiftRequest(db *sql.DB, accountIDStr string, accountID uuid.UUID, recei
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response: %s\n", resp.Proto)
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("could not read response body: %w", err)
+	}
+
+	// Try to decode JSON if expected
 	var errorResponse map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
-		fmt.Println("Error decoding response body:", err)
-		return nil, (fmt.Errorf("could not decode response: %s", err))
+	if err := json.Unmarshal(body, &errorResponse); err != nil {
+		// Log raw body for debugging since it's not valid JSON
+		fmt.Printf("Non-JSON response body: %s\n", string(body))
+		return nil, fmt.Errorf("could not decode JSON, raw body: %s", string(body))
 	}
 
 	if errorCode, ok := errorResponse["errorCode"].(string); ok && errorCode == "errors.com.epicgames.modules.gamesubcatalog.purchase_not_allowed" {
@@ -480,22 +571,22 @@ func UpdateRemainingGiftsInAccounts(db *sql.DB) error {
 	}
 
 	// Update remaining gifts in bulk
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithZeroGifts, 0); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithZeroGifts, 5); err != nil {
 		return fmt.Errorf("could not update accounts with zero gifts: %w", err)
 	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithOneGift, 1); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithOneGift, 4); err != nil {
 		return fmt.Errorf("could not update accounts with one gift: %w", err)
 	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithTwoGifts, 2); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithTwoGifts, 3); err != nil {
 		return fmt.Errorf("could not update accounts with two gifts: %w", err)
 	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithThreeGifts, 3); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithThreeGifts, 2); err != nil {
 		return fmt.Errorf("could not update accounts with three gifts: %w", err)
 	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFourGifts, 4); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFourGifts, 1); err != nil {
 		return fmt.Errorf("could not update accounts with four gifts: %w", err)
 	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFiveGifts, 5); err != nil {
+	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFiveGifts, 0); err != nil {
 		return fmt.Errorf("could not update accounts with five gifts: %w", err)
 	}
 	return nil

@@ -179,7 +179,7 @@ func StartFriendRequestHandler(db *sql.DB, intervalMinutes int) {
 
 		for _, account := range gameAccounts {
 			//sleep for 1+random second to avoid rate limiting
-			time.Sleep(time.Duration(rand.Float32()+1) * time.Second)
+			time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
 			friendRequests, err := getIncomingRequests(db, account)
 
 			//remove - from the friend requests
