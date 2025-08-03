@@ -464,7 +464,10 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 			fmt.Printf("Failed to read response body for account %s: %v\n", GameAccountID, err)
 			return nil, fmt.Errorf("could not read response body: %w", err)
 		}
-		fmt.Printf("Response Body: %s\n", string(bodyBytes))
+		//do not print response body if source is gift
+		if source != "gift" {
+			fmt.Printf("Response Body: %s\n", string(bodyBytes))
+		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Reset body for further reads
 	} else {
 		fmt.Printf("Response Body is nil for account %s\n", GameAccountID)
