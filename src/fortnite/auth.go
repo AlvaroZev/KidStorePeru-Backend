@@ -440,7 +440,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 		//keep alive
 		request.Header.Set("Connection", "keep-alive")
 		//accept encoding
-		request.Header.Set("Accept-Encoding", "gzip, deflate, br")
+		request.Header.Set("Accept-Encoding", "identity")
 		//accept
 		// //request.Header.Set("Accept", "*/*")
 
