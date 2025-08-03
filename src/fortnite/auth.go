@@ -436,13 +436,18 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 	if source == "pavos" {
 		fmt.Printf("Using Pavo source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
-		request.Header.Set("User-Agent", "PostmanRuntime/7.44.1")
+		// //request.Header.Set("User-Agent", "PostmanRuntime/7.44.1")
 		//keep alive
 		request.Header.Set("Connection", "keep-alive")
 		//accept encoding
 		//request.Header.Set("Accept-Encoding", "gzip, deflate, br")
 		//accept
-		request.Header.Set("Accept", "*/*")
+		// //request.Header.Set("Accept", "*/*")
+
+		request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+		request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		request.Header.Set("Accept-Language", "en-US,en;q=0.5")
+		request.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	} else {
 		fmt.Printf("Using standard source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)
