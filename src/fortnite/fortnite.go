@@ -592,3 +592,89 @@ func UpdateRemainingGiftsInAccounts(db *sql.DB) error {
 	return nil
 
 }
+
+// HandlerRefreshPavosForAccount handles refreshing pavos for a specific game account
+func HandlerRefreshPavosForAccount(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := utils.ProtectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		var req struct {
+			AccountID string `json:"account_id" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid request format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Parse the account ID
+		accountID, err := uuid.Parse(req.AccountID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid account ID format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Check if the account exists and user has access to it
+		gameAccount, err := database.GetGameAccount(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Game account not found",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Get user ID from token
+		_, userID, err := utils.GetUserIdFromToken(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Could not get user ID from token",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Check if user is admin or owns the account
+		isAdmin := utils.IsTokenAdmin(c)
+		if !isAdmin && gameAccount.OwnerUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "You don't have permission to refresh pavos for this account",
+			})
+			return
+		}
+
+		// Update pavos for the account
+		newPavos, err := UpdatePavosGameAccount(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not refresh pavos",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Pavos refreshed successfully",
+			"data": gin.H{
+				"account_id":   accountID.String(),
+				"display_name": gameAccount.DisplayName,
+				"pavos":        newPavos,
+			},
+		})
+	}
+}

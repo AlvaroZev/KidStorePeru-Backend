@@ -126,6 +126,7 @@ func main() {
 	//authorized.POST("/connectfaccount", fortnite.HandlerAuthorizationCodeLogin(db, &refreshTokenList))
 	authorized.POST("/sendGift", fortnite.HandlerSendGift(db))
 	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db))
+	authorized.POST("/refreshpavos", fortnite.HandlerRefreshPavosForAccount(db))
 	//authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosBulk(db))
 	//fetch transactions
 	authorized.GET("/transactions", page.HandlerGetTransactionsByAccount(db))
