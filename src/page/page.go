@@ -233,11 +233,29 @@ func HandlerGetGameAccountsByOwner(db *sql.DB) gin.HandlerFunc {
 			if err != nil {
 				return
 			}
+
+			// Get real-time gift slot status
+			giftSlotStatus, err := database.GetGiftSlotStatus(db, account.ID)
+			if err != nil {
+				fmt.Printf("Error getting gift slot status for account %s: %v\n", account.ID, err)
+				// Continue without gift slot status if there's an error
+				giftSlotStatus = nil
+			}
+
+			// Use real-time remaining gifts calculation
+			realTimeRemainingGifts, err := database.CalculateRemainingGifts(db, account.ID)
+			if err != nil {
+				fmt.Printf("Error calculating remaining gifts for account %s: %v\n", account.ID, err)
+				// Fall back to stored value if calculation fails
+				realTimeRemainingGifts = account.RemainingGifts
+			}
+
 			resultAccounts = append(resultAccounts, types.SimplifiedAccount{
 				ID:             accountIDStr,
 				DisplayName:    account.DisplayName,
 				Pavos:          account.PaVos,
-				RemainingGifts: account.RemainingGifts,
+				RemainingGifts: realTimeRemainingGifts,
+				GiftSlotStatus: giftSlotStatus,
 			})
 		}
 
@@ -334,11 +352,29 @@ func HandlerGetAllGameAccounts(db *sql.DB) gin.HandlerFunc {
 			if err != nil {
 				return
 			}
+
+			// Get real-time gift slot status
+			giftSlotStatus, err := database.GetGiftSlotStatus(db, account.ID)
+			if err != nil {
+				fmt.Printf("Error getting gift slot status for account %s: %v\n", account.ID, err)
+				// Continue without gift slot status if there's an error
+				giftSlotStatus = nil
+			}
+
+			// Use real-time remaining gifts calculation
+			realTimeRemainingGifts, err := database.CalculateRemainingGifts(db, account.ID)
+			if err != nil {
+				fmt.Printf("Error calculating remaining gifts for account %s: %v\n", account.ID, err)
+				// Fall back to stored value if calculation fails
+				realTimeRemainingGifts = account.RemainingGifts
+			}
+
 			resultAccounts = append(resultAccounts, types.SimplifiedAccount{
 				ID:             accountIDStr,
 				DisplayName:    account.DisplayName,
 				Pavos:          account.PaVos,
-				RemainingGifts: account.RemainingGifts,
+				RemainingGifts: realTimeRemainingGifts,
+				GiftSlotStatus: giftSlotStatus,
 			})
 		}
 

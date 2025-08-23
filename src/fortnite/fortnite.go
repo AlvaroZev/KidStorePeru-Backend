@@ -522,75 +522,19 @@ func SmartUpdatePavos(db *sql.DB, accountID uuid.UUID, pavos int) error {
 //raw example
 
 func UpdateRemainingGiftsInAccounts(db *sql.DB) error {
-	//sleep for 15 minutes
-	time.Sleep(15 * time.Minute)
-	// Get all game account IDs
-	accountIDs, err := database.GetAllGameAccountsIds(db)
+	// Sleep for 5 minutes (more frequent updates for better accuracy)
+	time.Sleep(5 * time.Minute)
+
+	fmt.Println("Starting gift slot refresh process...")
+
+	// Use the new proper calculation method
+	err := database.UpdateAllRemainingGifts(db)
 	if err != nil {
-		return fmt.Errorf("could not get game account IDs: %w", err)
+		return fmt.Errorf("could not update remaining gifts: %w", err)
 	}
 
-	//fetch the last 24 hours transactions
-	transactions, err := database.GetLast24HoursTransactions(db)
-	if err != nil {
-		return fmt.Errorf("could not fetch transactions: %w", err)
-	}
-
-	//make 6 lists, each one has accounts ids with 0, 1, 2, 3, 4, 5 remaining gifts from the max 5 each 24 hours.
-	var accountsWithZeroGifts []uuid.UUID
-	var accountsWithOneGift []uuid.UUID
-	var accountsWithTwoGifts []uuid.UUID
-	var accountsWithThreeGifts []uuid.UUID
-	var accountsWithFourGifts []uuid.UUID
-	var accountsWithFiveGifts []uuid.UUID
-
-	for _, tx := range accountIDs {
-		var remainingGifts int
-		for _, transaction := range transactions {
-			if transaction.GameAccountID == tx {
-				remainingGifts++
-			}
-		}
-
-		switch remainingGifts {
-		case 0:
-			accountsWithZeroGifts = append(accountsWithZeroGifts, tx)
-		case 1:
-			accountsWithOneGift = append(accountsWithOneGift, tx)
-		case 2:
-			accountsWithTwoGifts = append(accountsWithTwoGifts, tx)
-		case 3:
-			accountsWithThreeGifts = append(accountsWithThreeGifts, tx)
-		case 4:
-			accountsWithFourGifts = append(accountsWithFourGifts, tx)
-		case 5:
-			accountsWithFiveGifts = append(accountsWithFiveGifts, tx)
-		default:
-			fmt.Printf("Account %s has more than 5 gifts in the last 24 hours\n", tx.String())
-		}
-	}
-
-	// Update remaining gifts in bulk
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithZeroGifts, 5); err != nil {
-		return fmt.Errorf("could not update accounts with zero gifts: %w", err)
-	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithOneGift, 4); err != nil {
-		return fmt.Errorf("could not update accounts with one gift: %w", err)
-	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithTwoGifts, 3); err != nil {
-		return fmt.Errorf("could not update accounts with two gifts: %w", err)
-	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithThreeGifts, 2); err != nil {
-		return fmt.Errorf("could not update accounts with three gifts: %w", err)
-	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFourGifts, 1); err != nil {
-		return fmt.Errorf("could not update accounts with four gifts: %w", err)
-	}
-	if err := database.UpdateRemainingGiftsInBulk(db, accountsWithFiveGifts, 0); err != nil {
-		return fmt.Errorf("could not update accounts with five gifts: %w", err)
-	}
+	fmt.Println("Gift slot refresh completed successfully")
 	return nil
-
 }
 
 // HandlerRefreshPavosForAccount handles refreshing pavos for a specific game account
@@ -674,6 +618,91 @@ func HandlerRefreshPavosForAccount(db *sql.DB) gin.HandlerFunc {
 				"account_id":   accountID.String(),
 				"display_name": gameAccount.DisplayName,
 				"pavos":        newPavos,
+			},
+		})
+	}
+}
+
+// HandlerGetGiftSlotStatus returns detailed gift slot information for an account
+func HandlerGetGiftSlotStatus(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := utils.ProtectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		var req struct {
+			AccountID string `json:"account_id" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid request format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Parse the account ID
+		accountID, err := uuid.Parse(req.AccountID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid account ID format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Check if the account exists and user has access to it
+		gameAccount, err := database.GetGameAccount(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Game account not found",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Get user ID from token
+		_, userID, err := utils.GetUserIdFromToken(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Could not get user ID from token",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Check if user is admin or owns the account
+		isAdmin := utils.IsTokenAdmin(c)
+		if !isAdmin && gameAccount.OwnerUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "You don't have permission to view this account's gift status",
+			})
+			return
+		}
+
+		// Get gift slot status
+		status, err := database.GetGiftSlotStatus(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not get gift slot status",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data": gin.H{
+				"account_id":   accountID.String(),
+				"display_name": gameAccount.DisplayName,
+				"gift_status":  status,
 			},
 		})
 	}

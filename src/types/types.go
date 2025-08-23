@@ -148,10 +148,11 @@ type RefreshList map[uuid.UUID]AccountTokens
 
 // Map to simplified response
 type SimplifiedAccount struct {
-	ID             string `json:"id"`
-	DisplayName    string `json:"displayName"`
-	Pavos          int    `json:"pavos"`
-	RemainingGifts int    `json:"remainingGifts"`
+	ID             string                 `json:"id"`
+	DisplayName    string                 `json:"displayName"`
+	Pavos          int                    `json:"pavos"`
+	RemainingGifts int                    `json:"remainingGifts"`
+	GiftSlotStatus map[string]interface{} `json:"giftSlotStatus,omitempty"`
 }
 
 type GameFriendRequest struct {

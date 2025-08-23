@@ -127,6 +127,7 @@ func main() {
 	authorized.POST("/sendGift", fortnite.HandlerSendGift(db))
 	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db))
 	authorized.POST("/refreshpavos", fortnite.HandlerRefreshPavosForAccount(db))
+	authorized.POST("/giftslotstatus", fortnite.HandlerGetGiftSlotStatus(db))
 	//authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosBulk(db))
 	//fetch transactions
 	authorized.GET("/transactions", page.HandlerGetTransactionsByAccount(db))

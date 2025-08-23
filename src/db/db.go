@@ -5,6 +5,7 @@ import (
 	"KidStoreBotBE/src/utils"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -333,13 +334,8 @@ func GetLast24HoursTransactions(db *sql.DB) ([]types.Transaction, error) {
 }
 
 func GetRemainingGifts(db *sql.DB, accountID uuid.UUID) (int, error) {
-	var remainingGifts int
-	err := db.QueryRow(`SELECT remaining_gifts FROM game_accounts WHERE id = $1`, accountID).Scan(&remainingGifts)
-	if err != nil {
-		fmt.Printf("Error fetching remaining gifts: %v", err)
-		return 0, err
-	}
-	return remainingGifts, nil
+	// Use real-time calculation instead of stored value for accuracy
+	return CalculateRemainingGifts(db, accountID)
 }
 
 func UpdateRemainingGifts(db *sql.DB, accountID uuid.UUID, remainingGifts int) error {
@@ -398,4 +394,109 @@ func GetTransactions(db *sql.DB) ([]types.Transaction, error) {
 		transactions = append(transactions, tx)
 	}
 	return transactions, nil
+}
+
+// CalculateRemainingGifts properly calculates remaining gifts based on 24-hour cooldown
+func CalculateRemainingGifts(db *sql.DB, accountID uuid.UUID) (int, error) {
+	// Count transactions that are less than 24 hours old
+	// These are the "used" gift slots that haven't reset yet
+	var usedGifts int
+	err := db.QueryRow(`
+		SELECT COUNT(*) 
+		FROM transactions 
+		WHERE game_account_id = $1 
+		AND created_at >= NOW() - INTERVAL '24 hours'
+	`, accountID).Scan(&usedGifts)
+
+	if err != nil {
+		return 0, fmt.Errorf("could not count used gifts: %w", err)
+	}
+
+	// Each account starts with 5 gifts, so remaining = 5 - used
+	remainingGifts := 5 - usedGifts
+	if remainingGifts < 0 {
+		remainingGifts = 0 // Ensure we don't go negative
+	}
+
+	return remainingGifts, nil
+}
+
+// UpdateAllRemainingGifts updates the remaining_gifts field for all accounts based on 24-hour cooldown
+func UpdateAllRemainingGifts(db *sql.DB) error {
+	// Get all game account IDs
+	accountIDs, err := GetAllGameAccountsIds(db)
+	if err != nil {
+		return fmt.Errorf("could not get game account IDs: %w", err)
+	}
+
+	// Update each account's remaining gifts
+	for _, accountID := range accountIDs {
+		remainingGifts, err := CalculateRemainingGifts(db, accountID)
+		if err != nil {
+			fmt.Printf("Error calculating remaining gifts for account %s: %v\n", accountID, err)
+			continue
+		}
+
+		err = UpdateRemainingGifts(db, accountID, remainingGifts)
+		if err != nil {
+			fmt.Printf("Error updating remaining gifts for account %s: %v\n", accountID, err)
+			continue
+		}
+
+		fmt.Printf("Updated account %s: %d remaining gifts\n", accountID, remainingGifts)
+	}
+
+	return nil
+}
+
+// GetNextGiftSlotTime returns the time when the next gift slot will become available
+func GetNextGiftSlotTime(db *sql.DB, accountID uuid.UUID) (*time.Time, error) {
+	var nextSlotTime time.Time
+	err := db.QueryRow(`
+		SELECT created_at + INTERVAL '24 hours'
+		FROM transactions 
+		WHERE game_account_id = $1 
+		AND created_at >= NOW() - INTERVAL '24 hours'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, accountID).Scan(&nextSlotTime)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// No recent transactions, all slots are available
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not get next gift slot time: %w", err)
+	}
+
+	return &nextSlotTime, nil
+}
+
+// GetGiftSlotStatus returns detailed information about gift slot availability
+func GetGiftSlotStatus(db *sql.DB, accountID uuid.UUID) (map[string]interface{}, error) {
+	remainingGifts, err := CalculateRemainingGifts(db, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("could not calculate remaining gifts: %w", err)
+	}
+
+	nextSlotTime, err := GetNextGiftSlotTime(db, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("could not get next slot time: %w", err)
+	}
+
+	status := map[string]interface{}{
+		"remaining_gifts": remainingGifts,
+		"max_gifts":       5,
+		"used_gifts":      5 - remainingGifts,
+	}
+
+	if nextSlotTime != nil {
+		status["next_slot_available"] = nextSlotTime
+		status["time_until_next_slot"] = time.Until(*nextSlotTime).String()
+	} else {
+		status["next_slot_available"] = nil
+		status["time_until_next_slot"] = "All slots available"
+	}
+
+	return status, nil
 }
