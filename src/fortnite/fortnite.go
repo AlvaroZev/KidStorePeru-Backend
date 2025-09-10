@@ -113,6 +113,38 @@ func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
 	return pavos, nil
 }
 
+// UpdatePavosGameAccountManually manually updates pavos by subtracting a specific amount
+func UpdatePavosGameAccountManually(db *sql.DB, accountID uuid.UUID, amountToSubtract int) (int, error) {
+	// Get current pavos from database
+	currentPavos, err := database.GetPavos(db, accountID)
+	if err != nil {
+		fmt.Printf("Could not get current PaVos for account %s: %v\n", accountID, err)
+		return 0, fmt.Errorf("could not get current PaVos for account %s: %w", accountID, err)
+	}
+
+	// Calculate new pavos amount
+	newPavos := currentPavos - amountToSubtract
+
+	// Ensure pavos don't go negative
+	if newPavos < 0 {
+		fmt.Printf("Warning: Attempted to subtract %d pavos from account %s, but only %d pavos available. Setting to 0.\n",
+			amountToSubtract, accountID, currentPavos)
+		newPavos = 0
+	}
+
+	// Update pavos in database
+	err = database.UpdatePaVos(db, accountID, newPavos)
+	if err != nil {
+		fmt.Printf("Could not manually update PaVos for account %s: %v\n", accountID, err)
+		return 0, fmt.Errorf("could not manually update PaVos for account %s: %w", accountID, err)
+	}
+
+	fmt.Printf("Successfully manually updated PaVos for account %s: %d -> %d (subtracted %d)\n",
+		accountID, currentPavos, newPavos, amountToSubtract)
+
+	return newPavos, nil
+}
+
 // func HandlerUpdatePavosBulk(db *sql.DB, refreshList *RefreshList) gin.HandlerFunc {
 // 	return func(c *gin.Context) {
 // 		result := utils.ProtectedEndpointHandler(c)
@@ -251,7 +283,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		}
 		if remainingGifts <= 0 {
 
-			fmt.Printf("No gifts remaining for account %s\n", AccountId, remainingGifts)
+			fmt.Printf("No gifts remaining for account %s: %d\n", AccountId, remainingGifts)
 			c.JSON(http.StatusForbidden, gin.H{
 				"success":        false,
 				"error":          "You have no gifts left to send",
@@ -310,22 +342,32 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 
 		_, err = UpdatePavosGameAccount(db, AccountId)
 		if err != nil {
-			fmt.Printf("Error updating PaVos: %v\n", err)
-			c.JSON(http.StatusAccepted, gin.H{
-				"success": true,
-				"message": "Regalo enviado exitosamente",
-				"error":   "No se pudieron actualizar los PaVos",
-				"details": err.Error(),
-				"giftInfo": gin.H{
-					"senderName":   req.SenderName,
-					"receiverName": req.ReceiverName,
-					"giftName":     req.GiftName,
-					"giftPrice":    req.GiftPrice,
-					"giftImage":    req.GiftImage,
-					"giftId":       req.GiftId,
-				},
-			})
-			return
+			fmt.Printf("Error updating PaVos automatically: %v\n", err)
+			fmt.Printf("Attempting manual PaVos update by subtracting gift price: %d\n", req.GiftPrice)
+
+			// Try manual update by subtracting the gift price
+			_, manualErr := UpdatePavosGameAccountManually(db, AccountId, req.GiftPrice)
+			if manualErr != nil {
+				fmt.Printf("Error updating PaVos manually: %v\n", manualErr)
+				c.JSON(http.StatusAccepted, gin.H{
+					"success": true,
+					"message": "Regalo enviado exitosamente",
+					"error":   "No se pudieron actualizar los PaVos (automático ni manual)",
+					"details": fmt.Sprintf("Automático: %v, Manual: %v", err.Error(), manualErr.Error()),
+					"giftInfo": gin.H{
+						"senderName":   req.SenderName,
+						"receiverName": req.ReceiverName,
+						"giftName":     req.GiftName,
+						"giftPrice":    req.GiftPrice,
+						"giftImage":    req.GiftImage,
+						"giftId":       req.GiftId,
+					},
+				})
+				return
+			}
+
+			// Manual update succeeded
+			fmt.Printf("PaVos updated manually after automatic update failed\n")
 		}
 
 		err = database.UpdateRemainingGifts(db, AccountId, remainingGifts-1)
