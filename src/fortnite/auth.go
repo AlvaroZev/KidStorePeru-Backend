@@ -435,7 +435,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 	// Set appropriate header
 	if source == "pavos" {
 		fmt.Printf("Using Pavo source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
-		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", GameAccount.AccessToken))
+		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s; cf_clearance=jlaoO7IXOwEipJ48ixVck2DxwPn9YUeA64GiwNCeg4M-1757486839-1.2.1.1-4msbjWuU_pEWUHd2RqZprQ9_cdkEzFVe5oTXJx9cnFxP6OQqwRX_MOIohhe8nhr5mvNPrhV1gxcbaGpmvG7clUFlTnaz0rPbZhm_JXlnXZQe5Reu.c.eoGbKrS2U8O51cV2S9.VzCfC8TkdoC9WarJ2hxprttfV2gKqrZp8eAAMaI7l.8pc41bS6s9bS2_JAU9xvqPU.5Lj9gKBNni9d9Alh1MWQKWAeSOWNCyBeFOM", GameAccount.AccessToken))
 		// //request.Header.Set("User-Agent", "PostmanRuntime/7.44.1")
 		//keep alive
 		request.Header.Set("Connection", "keep-alive")
@@ -499,7 +499,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 
 			// Retry with new token
 			if source == "pavos" {
-				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
+				request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s; cf_clearance=999282", newTokens.AccessToken))
 			} else {
 				request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
 			}
@@ -555,7 +555,7 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 
 		// Retry request again with new token
 		if source == "pavos" {
-			request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s", newTokens.AccessToken))
+			request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s; cf_clearance=999282", newTokens.AccessToken))
 		} else {
 			request.Header.Set("Authorization", "Bearer "+newTokens.AccessToken)
 		}
