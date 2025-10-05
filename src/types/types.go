@@ -20,6 +20,7 @@ type EnvConfigType struct {
 	RefreshTokensInMinutes int    `envconfig:"REFRESH_TOKENS_IN_MINUTES" default:"13"`
 	Epic_client            string `envconfig:"EPIC_CLIENT" default:""`
 	Epic_secret            string `envconfig:"EPIC_SECRET" default:""`
+	Fetch_pavos            bool   `envconfig:"FETCH_PAVOS" default:"true"`
 }
 
 // Fortnite API Login
@@ -191,6 +192,12 @@ type GiftRequest struct {
 	GiftName     string `json:"gift_name" binding:"required"`
 	Message      string `json:"message" binding:"required"`
 	GiftImage    string `json:"gift_image" binding:"required"`
+}
+
+type UpdatePavosRequest struct {
+	AccountID string `json:"account_id" binding:"required"`
+	Type      string `json:"type" binding:"required"` // "override" or "add"
+	Amount    int    `json:"amount" binding:"required"`
 }
 
 // Other types

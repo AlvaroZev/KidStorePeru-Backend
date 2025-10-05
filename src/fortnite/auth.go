@@ -435,18 +435,14 @@ func ExecuteOperationWithRefresh(request *http.Request, db *sql.DB, GameAccountI
 	// Set appropriate header
 	if source == "pavos" {
 		fmt.Printf("Using Pavo source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
-		request.Header.Set("Cookie", fmt.Sprintf("EPIC_BEARER_TOKEN=%s; cf_clearance=jlaoO7IXOwEipJ48ixVck2DxwPn9YUeA64GiwNCeg4M-1757486839-1.2.1.1-4msbjWuU_pEWUHd2RqZprQ9_cdkEzFVe5oTXJx9cnFxP6OQqwRX_MOIohhe8nhr5mvNPrhV1gxcbaGpmvG7clUFlTnaz0rPbZhm_JXlnXZQe5Reu.c.eoGbKrS2U8O51cV2S9.VzCfC8TkdoC9WarJ2hxprttfV2gKqrZp8eAAMaI7l.8pc41bS6s9bS2_JAU9xvqPU.5Lj9gKBNni9d9Alh1MWQKWAeSOWNCyBeFOM", GameAccount.AccessToken))
-		// //request.Header.Set("User-Agent", "PostmanRuntime/7.44.1")
-		//keep alive
-		request.Header.Set("Connection", "keep-alive")
-		//accept encoding
-		request.Header.Set("Accept-Encoding", "identity")
-		//accept
-		// //request.Header.Set("Accept", "*/*")
 
-		request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-		request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		request.Header.Set("Accept-Language", "en-US,en;q=0.5")
+		// Set headers exactly as they work in Edge browser
+		request.Header.Set("User-Agent", "KidStore/1.0.0")
+		request.Header.Set("Accept", "*/*")
+		request.Header.Set("Accept-Encoding", "gzip, deflate, br")
+		request.Header.Set("Connection", "keep-alive")
+
+		request.Header.Set("Cookie", "EPIC_BEARER_TOKEN=2cac1ce0234b433da4d63104412b647f")
 	} else {
 		fmt.Printf("Using standard source for account %s\n and access token %s", GameAccountID, GameAccount.AccessToken)
 		request.Header.Set("Authorization", "Bearer "+GameAccount.AccessToken)

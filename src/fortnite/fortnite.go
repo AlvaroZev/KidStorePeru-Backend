@@ -40,7 +40,9 @@ func UpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) {
 
 	for _, account := range gameAccounts {
 		//wait 1s+1rand(5) seconds before updating each account
-		time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
+		if utils.FetchPavos {
+			time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
+		}
 		_, err := UpdatePavosGameAccount(db, account.ID)
 		if err != nil {
 			fmt.Printf("Could not update PaVos for account %s: %v\n", account.ID, err)
@@ -81,7 +83,9 @@ func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.Han
 
 		for _, account := range gameAccounts {
 			//wait 1s+1rand(5) seconds before updating each account
-			time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
+			if utils.FetchPavos {
+				time.Sleep(time.Duration(rand.Float32()+0.2) * time.Second)
+			}
 			_, err := UpdatePavosGameAccount(db, account.ID)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
@@ -97,20 +101,27 @@ func HandlerUpdatePavosForUser(db *sql.DB, userID uuid.UUID, admin bool) gin.Han
 }
 
 func UpdatePavosGameAccount(db *sql.DB, accountID uuid.UUID) (int, error) {
-	pavos, err := GetAccountPavos(db, accountID)
-	if err != nil {
-		fmt.Printf("Could not get PaVos for account %s.: %v\n", accountID, err)
-		return 0, fmt.Errorf("could not get PaVos for account %s.: %s", accountID, err)
-	}
+	if utils.FetchPavos {
 
-	err = database.UpdatePaVos(db, accountID, pavos)
-	if err != nil {
-		fmt.Printf("Could not update PaVos for account %s.: %v\n", accountID, err)
-		return 0, fmt.Errorf("could not update PaVos for account %s.: %s", accountID, err)
-	}
+		pavos, err := GetAccountPavos(db, accountID)
+		if err != nil {
+			fmt.Printf("Could not get PaVos for account %s.: %v\n", accountID, err)
+			return 0, fmt.Errorf("could not get PaVos for account %s.: %s", accountID, err)
+		}
 
-	fmt.Printf("Successfully updated PaVos for account %s: %d\n", accountID, pavos)
-	return pavos, nil
+		err = database.UpdatePaVos(db, accountID, pavos)
+		if err != nil {
+			fmt.Printf("Could not update PaVos for account %s.: %v\n", accountID, err)
+			return 0, fmt.Errorf("could not update PaVos for account %s.: %s", accountID, err)
+		}
+
+		fmt.Printf("Successfully updated PaVos for account %s: %d\n", accountID, pavos)
+		return pavos, nil
+
+	} else {
+		fmt.Printf("Skipping PaVos update for account %s due to FETCH_PAVOS=false\n", accountID)
+		return 0, nil
+	}
 }
 
 // UpdatePavosGameAccountManually manually updates pavos by subtracting a specific amount
@@ -745,6 +756,127 @@ func HandlerGetGiftSlotStatus(db *sql.DB) gin.HandlerFunc {
 				"account_id":   accountID.String(),
 				"display_name": gameAccount.DisplayName,
 				"gift_status":  status,
+			},
+		})
+	}
+}
+
+// HandlerUpdatePavosForAccount handles updating pavos for a specific game account
+func HandlerUpdatePavosForAccount(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		result := utils.ProtectedEndpointHandler(c)
+		if result != 200 {
+			return
+		}
+
+		var req types.UpdatePavosRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid request format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Parse the account ID
+		accountID, err := uuid.Parse(req.AccountID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Invalid account ID format",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Validate type parameter
+		if req.Type != "override" && req.Type != "add" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "Type must be either 'override' or 'add'",
+			})
+			return
+		}
+
+		// Check if the account exists and user has access to it
+		gameAccount, err := database.GetGameAccount(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Game account not found",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Get user ID from token
+		_, userID, err := utils.GetUserIdFromToken(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Could not get user ID from token",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		// Check if user is admin or owns the account
+		isAdmin := utils.IsTokenAdmin(c)
+		if !isAdmin && gameAccount.OwnerUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "You don't have permission to update pavos for this account",
+			})
+			return
+		}
+
+		// Get current pavos
+		currentPavos, err := database.GetPavos(db, accountID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not get current pavos",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		var newPavos int
+		if req.Type == "override" {
+			// Set pavos to the specified amount
+			newPavos = req.Amount
+		} else if req.Type == "add" {
+			// Add the amount to current pavos
+			newPavos = currentPavos + req.Amount
+		}
+
+		// Ensure pavos don't go negative
+		if newPavos < 0 {
+			newPavos = 0
+		}
+
+		// Update pavos in database
+		err = database.UpdatePaVos(db, accountID, newPavos)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Could not update pavos",
+				"details": err.Error(),
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "Pavos updated successfully",
+			"data": gin.H{
+				"account_id":     accountID.String(),
+				"display_name":   gameAccount.DisplayName,
+				"previous_pavos": currentPavos,
+				"new_pavos":      newPavos,
+				"operation":      req.Type,
+				"amount":         req.Amount,
 			},
 		})
 	}

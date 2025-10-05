@@ -19,6 +19,10 @@ import (
 
 func HandlerLoginForm(db *sql.DB, adminUsername string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !utils.FetchPavos {
+			//print true
+			fmt.Println("FetchPavos is fsalse")
+		}
 		var form types.Login
 		if err := c.ShouldBind(&form); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
@@ -45,7 +49,9 @@ func HandlerLoginForm(db *sql.DB, adminUsername string) gin.HandlerFunc {
 					return
 				}
 				// Update pavos for admin user
-				fortnite.UpdatePavosForUser(db, dbuser.ID, true)
+				if utils.FetchPavos {
+					fortnite.UpdatePavosForUser(db, dbuser.ID, true)
+				}
 				c.JSON(http.StatusOK, gin.H{"success": true, "token": tokenString})
 				return
 			} else {
@@ -54,7 +60,9 @@ func HandlerLoginForm(db *sql.DB, adminUsername string) gin.HandlerFunc {
 					c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "Could not create token", "details": err.Error()})
 					return
 				}
-				fortnite.UpdatePavosForUser(db, dbuser.ID, false)
+				if utils.FetchPavos {
+					fortnite.UpdatePavosForUser(db, dbuser.ID, false)
+				}
 				c.JSON(http.StatusOK, gin.H{"success": true, "token": tokenString})
 
 				return

@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
+	_ "github.com/lib/pq" // <--- add this
 )
 
 // ============================ MAIN ============================
@@ -128,6 +129,7 @@ func main() {
 	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db))
 	authorized.POST("/refreshpavos", fortnite.HandlerRefreshPavosForAccount(db))
 	authorized.POST("/giftslotstatus", fortnite.HandlerGetGiftSlotStatus(db))
+	authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosForAccount(db))
 	//authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosBulk(db))
 	//fetch transactions
 	authorized.GET("/transactions", page.HandlerGetTransactionsByAccount(db))

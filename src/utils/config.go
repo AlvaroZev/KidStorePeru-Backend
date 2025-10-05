@@ -12,6 +12,7 @@ import (
 // Global constant-like variable (readonly in practice)
 var EpicClient string
 var EpicSecret string
+var FetchPavos bool
 
 func init() {
 	//first check if the file exists and then load it
@@ -29,4 +30,5 @@ func init() {
 	// Set the global variable
 	EpicClient = cfg.Epic_client
 	EpicSecret = cfg.Epic_secret
+	FetchPavos = cfg.Fetch_pavos
 }
