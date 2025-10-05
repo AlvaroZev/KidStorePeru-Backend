@@ -233,7 +233,27 @@ func HandlerGetGameAccountsByOwner(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
-		//print game accounts
+		// Extract account IDs for batch processing
+		accountIDs := make([]uuid.UUID, len(gameAccounts))
+		for i, account := range gameAccounts {
+			accountIDs[i] = account.ID
+		}
+
+		// Batch get gift slot status for all accounts at once
+		giftSlotStatusMap, err := database.BatchGetGiftSlotStatus(db, accountIDs)
+		if err != nil {
+			fmt.Printf("Error batch getting gift slot status: %v\n", err)
+			// Continue without gift slot status if there's an error
+			giftSlotStatusMap = make(map[uuid.UUID]map[string]interface{})
+		}
+
+		// Batch calculate remaining gifts for all accounts at once
+		remainingGiftsMap, err := database.BatchCalculateRemainingGifts(db, accountIDs)
+		if err != nil {
+			fmt.Printf("Error batch calculating remaining gifts: %v\n", err)
+			// Fall back to stored values if calculation fails
+			remainingGiftsMap = make(map[uuid.UUID]int)
+		}
 
 		var resultAccounts []types.SimplifiedAccount = []types.SimplifiedAccount{}
 		for _, account := range gameAccounts {
@@ -242,19 +262,12 @@ func HandlerGetGameAccountsByOwner(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 
-			// Get real-time gift slot status
-			giftSlotStatus, err := database.GetGiftSlotStatus(db, account.ID)
-			if err != nil {
-				fmt.Printf("Error getting gift slot status for account %s: %v\n", account.ID, err)
-				// Continue without gift slot status if there's an error
-				giftSlotStatus = nil
-			}
+			// Get pre-calculated values from batch operations
+			giftSlotStatus := giftSlotStatusMap[account.ID]
+			realTimeRemainingGifts := remainingGiftsMap[account.ID]
 
-			// Use real-time remaining gifts calculation
-			realTimeRemainingGifts, err := database.CalculateRemainingGifts(db, account.ID)
-			if err != nil {
-				fmt.Printf("Error calculating remaining gifts for account %s: %v\n", account.ID, err)
-				// Fall back to stored value if calculation fails
+			// Fall back to stored value if batch calculation failed
+			if realTimeRemainingGifts == 0 && giftSlotStatus == nil {
 				realTimeRemainingGifts = account.RemainingGifts
 			}
 
@@ -354,6 +367,28 @@ func HandlerGetAllGameAccounts(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 
+		// Extract account IDs for batch processing
+		accountIDs := make([]uuid.UUID, len(gameAccounts))
+		for i, account := range gameAccounts {
+			accountIDs[i] = account.ID
+		}
+
+		// Batch get gift slot status for all accounts at once
+		giftSlotStatusMap, err := database.BatchGetGiftSlotStatus(db, accountIDs)
+		if err != nil {
+			fmt.Printf("Error batch getting gift slot status: %v\n", err)
+			// Continue without gift slot status if there's an error
+			giftSlotStatusMap = make(map[uuid.UUID]map[string]interface{})
+		}
+
+		// Batch calculate remaining gifts for all accounts at once
+		remainingGiftsMap, err := database.BatchCalculateRemainingGifts(db, accountIDs)
+		if err != nil {
+			fmt.Printf("Error batch calculating remaining gifts: %v\n", err)
+			// Fall back to stored values if calculation fails
+			remainingGiftsMap = make(map[uuid.UUID]int)
+		}
+
 		var resultAccounts []types.SimplifiedAccount = []types.SimplifiedAccount{}
 		for _, account := range gameAccounts {
 			accountIDStr, err := utils.ConvertUUIDToString(account.ID)
@@ -361,19 +396,12 @@ func HandlerGetAllGameAccounts(db *sql.DB) gin.HandlerFunc {
 				return
 			}
 
-			// Get real-time gift slot status
-			giftSlotStatus, err := database.GetGiftSlotStatus(db, account.ID)
-			if err != nil {
-				fmt.Printf("Error getting gift slot status for account %s: %v\n", account.ID, err)
-				// Continue without gift slot status if there's an error
-				giftSlotStatus = nil
-			}
+			// Get pre-calculated values from batch operations
+			giftSlotStatus := giftSlotStatusMap[account.ID]
+			realTimeRemainingGifts := remainingGiftsMap[account.ID]
 
-			// Use real-time remaining gifts calculation
-			realTimeRemainingGifts, err := database.CalculateRemainingGifts(db, account.ID)
-			if err != nil {
-				fmt.Printf("Error calculating remaining gifts for account %s: %v\n", account.ID, err)
-				// Fall back to stored value if calculation fails
+			// Fall back to stored value if batch calculation failed
+			if realTimeRemainingGifts == 0 && giftSlotStatus == nil {
 				realTimeRemainingGifts = account.RemainingGifts
 			}
 

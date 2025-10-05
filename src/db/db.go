@@ -500,3 +500,109 @@ func GetGiftSlotStatus(db *sql.DB, accountID uuid.UUID) (map[string]interface{},
 
 	return status, nil
 }
+
+// BatchCalculateRemainingGifts calculates remaining gifts for multiple accounts in a single query
+func BatchCalculateRemainingGifts(db *sql.DB, accountIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	if len(accountIDs) == 0 {
+		return make(map[uuid.UUID]int), nil
+	}
+
+	// Count transactions for all accounts in one query
+	rows, err := db.Query(`
+		SELECT game_account_id, COUNT(*) as used_gifts
+		FROM transactions 
+		WHERE game_account_id = ANY($1)
+		AND created_at >= NOW() - INTERVAL '24 hours'
+		GROUP BY game_account_id
+	`, pq.Array(accountIDs))
+
+	if err != nil {
+		return nil, fmt.Errorf("could not batch count used gifts: %w", err)
+	}
+	defer rows.Close()
+
+	usedGiftsMap := make(map[uuid.UUID]int)
+	for rows.Next() {
+		var accountID uuid.UUID
+		var usedGifts int
+		if err := rows.Scan(&accountID, &usedGifts); err != nil {
+			return nil, fmt.Errorf("could not scan used gifts: %w", err)
+		}
+		usedGiftsMap[accountID] = usedGifts
+	}
+
+	// Calculate remaining gifts for all accounts
+	result := make(map[uuid.UUID]int)
+	for _, accountID := range accountIDs {
+		usedGifts := usedGiftsMap[accountID] // defaults to 0 if not found
+		remainingGifts := 5 - usedGifts
+		if remainingGifts < 0 {
+			remainingGifts = 0
+		}
+		result[accountID] = remainingGifts
+	}
+
+	return result, nil
+}
+
+// BatchGetGiftSlotStatus returns gift slot status for multiple accounts efficiently
+func BatchGetGiftSlotStatus(db *sql.DB, accountIDs []uuid.UUID) (map[uuid.UUID]map[string]interface{}, error) {
+	if len(accountIDs) == 0 {
+		return make(map[uuid.UUID]map[string]interface{}), nil
+	}
+
+	// Get remaining gifts for all accounts
+	remainingGiftsMap, err := BatchCalculateRemainingGifts(db, accountIDs)
+	if err != nil {
+		return nil, fmt.Errorf("could not batch calculate remaining gifts: %w", err)
+	}
+
+	// Get next slot times for all accounts in one query
+	rows, err := db.Query(`
+		SELECT DISTINCT ON (game_account_id) game_account_id, created_at + INTERVAL '24 hours' as next_slot_time
+		FROM transactions 
+		WHERE game_account_id = ANY($1)
+		AND created_at >= NOW() - INTERVAL '24 hours'
+		ORDER BY game_account_id, created_at ASC
+	`, pq.Array(accountIDs))
+
+	if err != nil {
+		return nil, fmt.Errorf("could not batch get next slot times: %w", err)
+	}
+	defer rows.Close()
+
+	nextSlotTimes := make(map[uuid.UUID]*time.Time)
+	for rows.Next() {
+		var accountID uuid.UUID
+		var nextSlotTime time.Time
+		if err := rows.Scan(&accountID, &nextSlotTime); err != nil {
+			return nil, fmt.Errorf("could not scan next slot time: %w", err)
+		}
+		nextSlotTimes[accountID] = &nextSlotTime
+	}
+
+	// Build status for all accounts
+	result := make(map[uuid.UUID]map[string]interface{})
+	for _, accountID := range accountIDs {
+		remainingGifts := remainingGiftsMap[accountID]
+		nextSlotTime := nextSlotTimes[accountID]
+
+		status := map[string]interface{}{
+			"remaining_gifts": remainingGifts,
+			"max_gifts":       5,
+			"used_gifts":      5 - remainingGifts,
+		}
+
+		if nextSlotTime != nil {
+			status["next_slot_available"] = nextSlotTime
+			status["time_until_next_slot"] = time.Until(*nextSlotTime).String()
+		} else {
+			status["next_slot_available"] = nil
+			status["time_until_next_slot"] = "All slots available"
+		}
+
+		result[accountID] = status
+	}
+
+	return result, nil
+}
