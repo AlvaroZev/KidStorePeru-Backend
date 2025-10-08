@@ -352,7 +352,7 @@ func HandlerSendGift(db *sql.DB) gin.HandlerFunc {
 		}
 
 		_, err = UpdatePavosGameAccount(db, AccountId)
-		if err != nil {
+		if err != nil || utils.FetchPavos {
 			fmt.Printf("Error updating PaVos automatically: %v\n", err)
 			fmt.Printf("Attempting manual PaVos update by subtracting gift price: %d\n", req.GiftPrice)
 
