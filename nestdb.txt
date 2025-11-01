@@ -61,6 +61,6 @@ CREATE TABLE secrets (
 -- Insert default user
 INSERT INTO users (username, password)
 VALUES (
-    'KidStoreAdmin', -- admin username
-    'q23456789p'  -- admin password as bcrypt hash
+    '', -- admin username
+    ''  -- admin password as bcrypt hash
 );
