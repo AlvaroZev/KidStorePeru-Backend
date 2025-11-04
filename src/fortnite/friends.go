@@ -113,7 +113,7 @@ func getIncomingRequests(db *sql.DB, gameAccount types.GameAccount) ([]types.Fri
 
 	AccountIDStr, err := utils.ConvertUUIDToString(gameAccount.ID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid game account ID: %w", err)
+		return nil, fmt.Errorf("invalid game account ID: %s", err)
 	}
 
 	request, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/incoming", AccountIDStr), nil)
@@ -142,11 +142,11 @@ func getIncomingRequests(db *sql.DB, gameAccount types.GameAccount) ([]types.Fri
 func acceptFriendRequests(db *sql.DB, gameAccount types.GameAccount, friends []types.FriendRequest) error {
 	AccountIDStr, err := utils.ConvertUUIDToString(gameAccount.ID)
 	if err != nil {
-		return fmt.Errorf("invalid game account ID: %w", err)
+		return fmt.Errorf("invalid game account ID: %s", err)
 	}
 
 	for _, friend := range friends {
-		request, _ := http.NewRequest("GET", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", AccountIDStr, friend.AccountID), nil)
+		request, _ := http.NewRequest("POST", fmt.Sprintf("https://friends-public-service-prod.ol.epicgames.com/friends/api/v1/%s/friends/%s", AccountIDStr, friend.AccountID), nil)
 		resp, err := ExecuteOperationWithRefresh(request, db, gameAccount.ID, "acceptFriendRequest")
 		if err != nil {
 			fmt.Printf("Failed to accept friend request from %s: %v\n", friend.AccountID, err)
@@ -164,12 +164,10 @@ func acceptFriendRequests(db *sql.DB, gameAccount types.GameAccount, friends []t
 }
 
 // TODO
-func StartFriendRequestHandler(db *sql.DB, intervalMinutes int) {
-	//we are using the refresh list here as it should contain ALL the accounts registered in the db
-	//this is a bit of a hack, but it works
+func StartFriendRequestHandler(db *sql.DB, intervalSeconds int) {
 
 	for {
-		time.Sleep(time.Duration(intervalMinutes) * time.Minute)
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
 
 		gameAccounts, err := database.GetAllGameAccounts(db)
 		if err != nil {

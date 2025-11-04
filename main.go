@@ -135,7 +135,7 @@ func main() {
 	authorized.GET("/transactions", page.HandlerGetTransactionsByAccount(db))
 	authorized.GET("/alltransactions", page.HandlerGetTransactionsAdmin(db))
 
-	//go fortnite.StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes) // Check every 5 minutes
+	go fortnite.StartFriendRequestHandler(db, cfg.AcceptFriendsInMinutes) // Check every 5 minutes
 	//go fortnite.StartTokenRefresher(db)                                   // Check every 10 minutes
 	go fortnite.UpdateRemainingGiftsInAccounts(db) // Check every 15 minutes
 

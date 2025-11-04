@@ -21,7 +21,7 @@ func HandlerLoginForm(db *sql.DB, adminUsername string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !utils.FetchPavos {
 			//print true
-			fmt.Println("FetchPavos is fsalse")
+			fmt.Println("FetchPavos is false")
 		}
 		var form types.Login
 		if err := c.ShouldBind(&form); err != nil {
