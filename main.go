@@ -57,6 +57,7 @@ func main() {
 	allowedOrigins := map[string]bool{
 		"*":                                true,
 		"http://localhost:5173":            true,
+		"http://localhost:3000":            true,
 		"https://your-production-site.com": true,
 		"chrome-extension://gmmkjpcadciiokjpikmkkmapphbmdjok":    true,
 		"https://kidstoreperu-frontend-react-dev.up.railway.app": true,
@@ -127,6 +128,7 @@ func main() {
 	//authorized.POST("/connectfaccount", fortnite.HandlerAuthorizationCodeLogin(db, &refreshTokenList))
 	authorized.POST("/sendGift", fortnite.HandlerSendGift(db))
 	authorized.POST("/searchfortnitefriend", fortnite.HandlerSearchOnlineFortniteAccount(db))
+	authorized.POST("/sendfriendrequest", fortnite.HandlerSendFriendRequestFromAllAccounts(db))
 	authorized.POST("/refreshpavos", fortnite.HandlerRefreshPavosForAccount(db))
 	authorized.POST("/giftslotstatus", fortnite.HandlerGetGiftSlotStatus(db))
 	authorized.POST("/updatepavos", fortnite.HandlerUpdatePavosForAccount(db))
