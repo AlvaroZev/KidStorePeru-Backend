@@ -16,7 +16,7 @@ type EnvConfigType struct {
 	SecretKey              string `envconfig:"SECRET_KEY"`
 	AdminUser              string `envconfig:"ADMIN_USER"`
 	AdminPass              string `envconfig:"ADMIN_PASS"`
-	AcceptFriendsInMinutes int    `envconfig:"ACCEPT_FRIENDS_IN_MINUTES" default:"5"`
+	AcceptFriendsInMinutes int    `envconfig:"ACCEPT_FRIENDS_IN_SECONDS" default:"5"`
 	RefreshTokensInMinutes int    `envconfig:"REFRESH_TOKENS_IN_MINUTES" default:"13"`
 	Epic_client            string `envconfig:"EPIC_CLIENT" default:""`
 	Epic_secret            string `envconfig:"EPIC_SECRET" default:""`
